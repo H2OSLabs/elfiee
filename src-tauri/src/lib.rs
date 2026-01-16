@@ -122,6 +122,15 @@ pub fn run() {
             .typ::<extensions::terminal::TerminalSavePayload>()
             .typ::<extensions::terminal::TerminalExecutePayload>()
             .typ::<extensions::terminal::TerminalInitPayload>()
+            // Agent extension payload types
+            .typ::<extensions::agent::AgentConfig>()
+            .typ::<extensions::agent::ProposedCommand>()
+            .typ::<extensions::agent::ProposalStatus>()
+            .typ::<extensions::agent::Proposal>()
+            .typ::<extensions::agent::AgentCreatePayload>()
+            .typ::<extensions::agent::AgentConfigurePayload>()
+            .typ::<extensions::agent::AgentInvokePayload>()
+            .typ::<extensions::agent::AgentApprovePayload>()
             // File metadata types
             .typ::<commands::FileMetadata>()
             // Block metadata types

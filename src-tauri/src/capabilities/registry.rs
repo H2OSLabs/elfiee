@@ -65,6 +65,7 @@ impl CapabilityRegistry {
 
     /// Register all extension capabilities.
     fn register_extensions(&mut self) {
+        use crate::extensions::agent::*;
         use crate::extensions::code::*;
         use crate::extensions::directory::*;
         use crate::extensions::markdown::*;
@@ -98,6 +99,10 @@ impl CapabilityRegistry {
         self.register(Arc::new(TaskWriteCapability));
         self.register(Arc::new(TaskReadCapability));
         self.register(Arc::new(TaskCommitCapability));
+
+        // Agent extension
+        self.register(Arc::new(AgentCreateCapability));
+        self.register(Arc::new(AgentConfigureCapability));
     }
 }
 
