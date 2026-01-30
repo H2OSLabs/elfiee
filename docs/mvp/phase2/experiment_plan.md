@@ -107,7 +107,72 @@ Phase 2 只认可如下实验结构：
 - Second-use 明确发生在“可访问 First-use 历史记录”的前提下
 
 
-### 2.2   Task Type 的约束条件
+### 2.2   场景流程、指令需求
+
+#### 环境准备（一次性）
+
+
+| 阶段  | 角色  | 操作描述                            | 对应 API / 系统能力                                                       | 备注                                  |
+| --- | --- | ------------------------------- | ------------------------------------------------------------------- | ----------------------------------- |
+| A1  | Dev | 创建 / 打开 `project.elf`           | `core.create_project` / `core.open_project`                         | GUI 内部完成 EventStore / Projector 初始化 |
+| A2  | Dev | 导入外部代码仓库                        | `directory.import(external_path)`                                   | 需记录 `external_root_path`            |
+| A3  | Dev | 创建并启用 Agent Block 和 Skill Block | `agent.create(target_project_id)`<br>`agent.enable(agent_block_id)` | 自动合并 MCP 配置                         |
+| A4  | Dev | 重启 Claude Code                  | *无 API*                                                             | Claude 自动连接 MCP Server              |
+#### 定义task
+| 顺序   | 角色           | 用户操作                  | 系统 / API 行为                      | 产品侧关心点       |
+| ---- | ------------ | --------------------- | -------------------------------- | ------------ |
+| B0-1 | PM           | 创建 Task Block         | `core.create(block_type="task")` |              |
+| B0-2 | PM           | 填写需求、约束、验收标准          | `task.write(...)`                | 约束是否结构化      |
+| B0-3 | PM           | 填写 Task Type          | `task.write({task_type})`        | **实验分组唯一依据** |
+| B0-4 | PM/Dev/Agent | （可选）引用历史 Task / Skill | `core.read(...)`                 | 若无历史，则无反应    |
+
+
+#### 执行任务
+
+| 顺序   | 角色          | 用户操作                 | 系统 / API 行为                            | 产品侧关心点            |
+| ---- | ----------- | -------------------- | -------------------------------------- | ----------------- |
+| B1-1 | Dev         | 在 Claude 中开始做这个 Task | `core.read(task_id)`                   | Task → Session 绑定 |
+| B1-2 | Dev / Agent | 写 / 改代码              | `code.write(...)`                      | 文件快照是否完整          |
+| B1-3 | Dev / Agent | 建立 Task → Code 实现关系  | `core.link(relation="implement")`      | 是否遗漏 implement    |
+| B1-4 | Dev         | 与 Claude 反复对话        | Session JSONL 同步                       | Clarification 数据源 |
+| B1-5 | Dev         | 运行测试 / 编译            | `terminal.run(command)`                | **FPY 指标采集**      |
+| B1-6 | 系统          | 记录验证结果               | Event 记录 `test_result: success / fail` | 是否一次通过（FPY）       |
+
+
+| 阶段  | 角色       | 行为描述           | 系统 / API 行为                        | 产品侧关心点                |
+| --- | -------- | -------------- | ---------------------------------- | --------------------- |
+| 执行中 | Dev / PM | 确认 AI 生成的阶段性总结 | `summary.confirm` / `summary.edit` | **Summary 采纳率（编辑距离）** |
+
+
+#### commit
+
+| 顺序   | 角色     | 用户操作                 | 系统 / API 行为                        | 产品侧关心点      |
+| ---- | ------ | -------------------- | ---------------------------------- | ----------- |
+| B3-1 | Dev    | 在 Claude 中发起提交       | `task.commit(task_id, push:false)` |             |
+| B3-2 | 系统     | 导出文件并自动 Git Commit   | `directory.export` → `git commit`  | commit 是否稳定 |
+| B3-3 | 系统     | Task 状态 → Committed  | 内部状态更新                             | TTE 计算边界    |
+| B3-4 | PM | 验收测试：拉取代码并运行验收脚本 | `directory.export`                 | 确定最终质量      |
+
+#### Archive
+
+| 顺序   | 角色  | 用户操作               | 系统 / API 行为                       | 产品侧关心点   |
+| ---- | --- | ------------------ | --------------------------------- | -------- |
+| B4-1 | Dev | 归档任务               | `task.archive(task_id)`           |          |
+| B4-2 | 系统  | 生成归档 Markdown      | `.elf/Archives/{date}-{title}.md` | 是否包含全部关联 |
+| B4-3 | 系统  | Task 状态 → Archived | 内部状态更新                            | 复用入口     |
+
+
+#### 实验视角下事后区分 first / second
+
+
+
+
+
+
+
+
+
+### 2.3   Task Type 的约束条件
 
 一个 Task Type 是否合格，取决于是否满足：
 
