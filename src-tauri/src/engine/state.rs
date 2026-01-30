@@ -369,6 +369,59 @@ impl StateProjector {
                 }
             }
 
+            // Agent block creation (same format as core.create)
+            "agent.create" => {
+                if let Some(obj) = event.value.as_object() {
+                    let block = Block {
+                        block_id: event.entity.clone(),
+                        name: obj
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        block_type: obj
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        owner: obj
+                            .get("owner")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        contents: obj
+                            .get("contents")
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::json!({})),
+                        children: obj
+                            .get("children")
+                            .and_then(|v| serde_json::from_value(v.clone()).ok())
+                            .unwrap_or_default(),
+                        metadata: obj
+                            .get("metadata")
+                            .and_then(|v| BlockMetadata::from_json(v).ok())
+                            .unwrap_or_default(),
+                    };
+                    self.blocks.insert(block.block_id.clone(), block);
+                }
+            }
+
+            // Agent enable/disable: update contents and metadata
+            "agent.enable" | "agent.disable" => {
+                if let Some(block) = self.blocks.get_mut(&event.entity) {
+                    // Replace contents entirely (AgentContents is a flat struct)
+                    if let Some(contents) = event.value.get("contents") {
+                        block.contents = contents.clone();
+                    }
+                    // Update metadata if present
+                    if let Some(new_metadata) = event.value.get("metadata") {
+                        if let Ok(parsed) = BlockMetadata::from_json(new_metadata) {
+                            block.metadata = parsed;
+                        }
+                    }
+                }
+            }
+
             // Editor creation
             "editor.create" => {
                 if let Some(editor_obj) = event.value.as_object() {

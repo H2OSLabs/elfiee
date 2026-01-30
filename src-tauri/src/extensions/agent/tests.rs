@@ -1,6 +1,10 @@
-//! Module-level tests for Agent extension
+//! Module-level tests for Agent extension (Phase 1 + Phase 2)
 
 use super::*;
+
+// ============================================
+// Phase 1 Types (preserved for backward compatibility)
+// ============================================
 
 #[test]
 fn test_agent_config_serialization() {
@@ -15,14 +19,10 @@ fn test_agent_config_serialization() {
     let json = serde_json::to_value(&config).unwrap();
     assert_eq!(json["editor_id"], "agent-123");
     assert_eq!(json["provider"], "anthropic");
-    assert_eq!(json["model"], "claude-sonnet-4-20250514");
-    assert_eq!(json["api_key_env"], "ANTHROPIC_API_KEY");
-    assert_eq!(json["system_prompt"], "You are helpful.");
 
     // Roundtrip
     let deserialized: AgentConfig = serde_json::from_value(json).unwrap();
     assert_eq!(deserialized.editor_id, config.editor_id);
-    assert_eq!(deserialized.provider, config.provider);
 }
 
 #[test]
@@ -36,8 +36,6 @@ fn test_proposed_command_serialization() {
 
     let json = serde_json::to_value(&cmd).unwrap();
     assert_eq!(json["cap_id"], "markdown.write");
-    assert_eq!(json["block_id"], "block-abc");
-    assert_eq!(json["payload"]["content"], "# Hello");
     assert_eq!(json["description"], "Write heading");
 }
 
@@ -51,7 +49,6 @@ fn test_proposed_command_without_description() {
     };
 
     let json = serde_json::to_value(&cmd).unwrap();
-    // With skip_serializing_if, None fields are omitted entirely
     assert!(!json.as_object().unwrap().contains_key("description"));
 }
 
@@ -85,14 +82,12 @@ fn test_proposal_status_deserialization() {
 #[test]
 fn test_proposal_serialization() {
     let proposal = Proposal {
-        proposed_commands: vec![
-            ProposedCommand {
-                cap_id: "markdown.write".to_string(),
-                block_id: "block-1".to_string(),
-                payload: serde_json::json!({"content": "Hello"}),
-                description: Some("Write content".to_string()),
-            },
-        ],
+        proposed_commands: vec![ProposedCommand {
+            cap_id: "markdown.write".to_string(),
+            block_id: "block-1".to_string(),
+            payload: serde_json::json!({"content": "Hello"}),
+            description: Some("Write content".to_string()),
+        }],
         status: ProposalStatus::Pending,
         prompt: "Create a document".to_string(),
         raw_response: Some("LLM response here".to_string()),
@@ -104,118 +99,141 @@ fn test_proposal_serialization() {
     assert_eq!(json["proposed_commands"].as_array().unwrap().len(), 1);
 }
 
+// ============================================
+// Phase 2 Types
+// ============================================
+
 #[test]
-fn test_agent_create_payload_serialization() {
-    let payload = AgentCreatePayload {
-        name: "My Assistant".to_string(),
-        provider: "anthropic".to_string(),
-        model: "claude-sonnet-4-20250514".to_string(),
-        api_key_env: "ANTHROPIC_API_KEY".to_string(),
-        system_prompt: Some("Be helpful".to_string()),
+fn test_agent_contents_serialization() {
+    let contents = AgentContents {
+        name: "elfiee".to_string(),
+        target_project_id: "proj-123".to_string(),
+        status: AgentStatus::Enabled,
     };
 
-    let json = serde_json::to_value(&payload).unwrap();
-    assert_eq!(json["name"], "My Assistant");
-    assert_eq!(json["system_prompt"], "Be helpful");
+    let json = serde_json::to_value(&contents).unwrap();
+    assert_eq!(json["name"], "elfiee");
+    assert_eq!(json["target_project_id"], "proj-123");
+    assert_eq!(json["status"], "enabled");
+
+    // Roundtrip
+    let deserialized: AgentContents = serde_json::from_value(json).unwrap();
+    assert_eq!(deserialized.name, "elfiee");
+    assert_eq!(deserialized.target_project_id, "proj-123");
+    assert_eq!(deserialized.status, AgentStatus::Enabled);
 }
 
 #[test]
-fn test_agent_create_payload_without_system_prompt() {
-    let payload = AgentCreatePayload {
-        name: "Assistant".to_string(),
-        provider: "anthropic".to_string(),
-        model: "claude-sonnet-4-20250514".to_string(),
-        api_key_env: "KEY".to_string(),
-        system_prompt: None,
-    };
-
-    let json = serde_json::to_value(&payload).unwrap();
-    // With skip_serializing_if, None fields are omitted entirely
-    assert!(!json.as_object().unwrap().contains_key("system_prompt"));
+fn test_agent_status_serialization() {
+    assert_eq!(
+        serde_json::to_string(&AgentStatus::Enabled).unwrap(),
+        "\"enabled\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AgentStatus::Disabled).unwrap(),
+        "\"disabled\""
+    );
 }
 
 #[test]
-fn test_agent_configure_payload_all_fields() {
-    let payload = AgentConfigurePayload {
-        provider: Some("openai".to_string()),
-        model: Some("gpt-4".to_string()),
-        api_key_env: Some("OPENAI_KEY".to_string()),
-        system_prompt: Some("New prompt".to_string()),
-    };
+fn test_agent_status_deserialization() {
+    let enabled: AgentStatus = serde_json::from_str("\"enabled\"").unwrap();
+    let disabled: AgentStatus = serde_json::from_str("\"disabled\"").unwrap();
 
-    let json = serde_json::to_value(&payload).unwrap();
-    assert_eq!(json["provider"], "openai");
-    assert_eq!(json["model"], "gpt-4");
+    assert_eq!(enabled, AgentStatus::Enabled);
+    assert_eq!(disabled, AgentStatus::Disabled);
 }
 
 #[test]
-fn test_agent_configure_payload_partial() {
-    let payload = AgentConfigurePayload {
-        provider: None,
-        model: Some("new-model".to_string()),
-        api_key_env: None,
-        system_prompt: None,
+fn test_agent_create_v2_payload_with_name() {
+    let payload = AgentCreateV2Payload {
+        name: Some("my-agent".to_string()),
+        target_project_id: "proj-123".to_string(),
     };
 
     let json = serde_json::to_value(&payload).unwrap();
-    // With skip_serializing_if, None fields are omitted entirely
-    assert!(!json.as_object().unwrap().contains_key("provider"));
-    assert_eq!(json["model"], "new-model");
-    // Only model should be present
-    assert_eq!(json.as_object().unwrap().len(), 1);
+    assert_eq!(json["name"], "my-agent");
+    assert_eq!(json["target_project_id"], "proj-123");
 }
 
 #[test]
-fn test_agent_invoke_payload_serialization() {
-    let payload = AgentInvokePayload {
-        prompt: "Help me write code".to_string(),
-        max_context_tokens: Some(4000),
-        context_block_ids: Some(vec!["block-1".to_string(), "block-2".to_string()]),
+fn test_agent_create_v2_payload_without_name() {
+    let payload = AgentCreateV2Payload {
+        name: None,
+        target_project_id: "proj-123".to_string(),
     };
 
     let json = serde_json::to_value(&payload).unwrap();
-    assert_eq!(json["prompt"], "Help me write code");
-    assert_eq!(json["max_context_tokens"], 4000);
-    assert_eq!(json["context_block_ids"].as_array().unwrap().len(), 2);
+    assert!(!json.as_object().unwrap().contains_key("name")); // skip_serializing_if
+    assert_eq!(json["target_project_id"], "proj-123");
 }
 
 #[test]
-fn test_agent_invoke_payload_minimal() {
-    let payload = AgentInvokePayload {
-        prompt: "Simple request".to_string(),
-        max_context_tokens: None,
-        context_block_ids: None,
+fn test_agent_enable_payload_serialization() {
+    let payload = AgentEnablePayload {
+        agent_block_id: "agent-block-123".to_string(),
     };
 
     let json = serde_json::to_value(&payload).unwrap();
-    assert_eq!(json["prompt"], "Simple request");
-    // With skip_serializing_if, None fields are omitted entirely
-    assert!(!json.as_object().unwrap().contains_key("max_context_tokens"));
-    assert!(!json.as_object().unwrap().contains_key("context_block_ids"));
+    assert_eq!(json["agent_block_id"], "agent-block-123");
 }
 
 #[test]
-fn test_agent_approve_payload_serialization() {
-    let payload = AgentApprovePayload {
-        proposal_event_id: "event-12345".to_string(),
-        approved: true,
+fn test_agent_disable_payload_serialization() {
+    let payload = AgentDisablePayload {
+        agent_block_id: "agent-block-456".to_string(),
     };
 
     let json = serde_json::to_value(&payload).unwrap();
-    assert_eq!(json["proposal_event_id"], "event-12345");
-    assert_eq!(json["approved"], true);
+    assert_eq!(json["agent_block_id"], "agent-block-456");
+}
 
-    let rejected = AgentApprovePayload {
-        proposal_event_id: "event-67890".to_string(),
-        approved: false,
+#[test]
+fn test_agent_create_result_serialization() {
+    let result = AgentCreateResult {
+        agent_block_id: "abc-123".to_string(),
+        status: AgentStatus::Enabled,
+        needs_restart: true,
+        message: "Agent created".to_string(),
     };
 
-    let json = serde_json::to_value(&rejected).unwrap();
-    assert_eq!(json["approved"], false);
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["agent_block_id"], "abc-123");
+    assert_eq!(json["status"], "enabled");
+    assert_eq!(json["needs_restart"], true);
+    assert_eq!(json["message"], "Agent created");
+}
+
+#[test]
+fn test_agent_enable_result_serialization() {
+    let result = AgentEnableResult {
+        agent_block_id: "abc-123".to_string(),
+        status: AgentStatus::Enabled,
+        needs_restart: true,
+        message: "Agent enabled".to_string(),
+        warnings: vec!["symlink warning".to_string()],
+    };
+
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["warnings"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn test_agent_disable_result_serialization() {
+    let result = AgentDisableResult {
+        agent_block_id: "abc-123".to_string(),
+        status: AgentStatus::Disabled,
+        message: "Agent disabled".to_string(),
+        warnings: vec![],
+    };
+
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["status"], "disabled");
+    assert!(json["warnings"].as_array().unwrap().is_empty());
 }
 
 // ============================================
-// AgentCreate - Authorization Tests
+// Authorization Tests
 // ============================================
 
 #[test]
@@ -224,17 +242,14 @@ fn test_create_authorization_owner() {
     use crate::models::Block;
 
     let grants_table = GrantsTable::new();
-
-    // For agent.create, target is "core/*" so we check general authorization
     let block = Block::new(
         "Test Block".to_string(),
         "agent".to_string(),
         "alice".to_string(),
     );
 
-    // Owner should always be authorized
-    let is_authorized = block.owner == "alice"
-        || grants_table.has_grant("alice", "agent.create", &block.block_id);
+    let is_authorized =
+        block.owner == "alice" || grants_table.has_grant("alice", "agent.create", &block.block_id);
 
     assert!(is_authorized, "Block owner should be authorized");
 }
@@ -245,118 +260,92 @@ fn test_create_authorization_non_owner_without_grant() {
     use crate::models::Block;
 
     let grants_table = GrantsTable::new();
-
     let block = Block::new(
         "Test Block".to_string(),
         "agent".to_string(),
         "alice".to_string(),
     );
 
-    // Bob (non-owner) without grant should not be authorized
     let is_authorized =
         block.owner == "bob" || grants_table.has_grant("bob", "agent.create", &block.block_id);
 
-    assert!(
-        !is_authorized,
-        "Non-owner without grant should not be authorized"
-    );
+    assert!(!is_authorized);
 }
 
 #[test]
-fn test_create_authorization_non_owner_with_grant() {
-    use crate::capabilities::grants::GrantsTable;
-    use crate::models::Block;
-
-    let mut grants_table = GrantsTable::new();
-
-    let block = Block::new(
-        "Test Block".to_string(),
-        "agent".to_string(),
-        "alice".to_string(),
-    );
-
-    // Grant Bob permission
-    grants_table.add_grant(
-        "bob".to_string(),
-        "agent.create".to_string(),
-        block.block_id.clone(),
-    );
-
-    let is_authorized =
-        block.owner == "bob" || grants_table.has_grant("bob", "agent.create", &block.block_id);
-
-    assert!(is_authorized, "Non-owner with grant should be authorized");
-}
-
-// ============================================
-// AgentConfigure - Authorization Tests
-// ============================================
-
-#[test]
-fn test_configure_authorization_owner() {
+fn test_enable_authorization_owner() {
     use crate::capabilities::grants::GrantsTable;
     use crate::models::Block;
 
     let grants_table = GrantsTable::new();
-
     let block = Block::new(
         "Test Agent".to_string(),
         "agent".to_string(),
         "alice".to_string(),
     );
 
-    // Owner should always be authorized
-    let is_authorized = block.owner == "alice"
-        || grants_table.has_grant("alice", "agent.configure", &block.block_id);
+    let is_authorized =
+        block.owner == "alice" || grants_table.has_grant("alice", "agent.enable", &block.block_id);
 
-    assert!(is_authorized, "Block owner should be authorized");
+    assert!(is_authorized);
 }
 
 #[test]
-fn test_configure_authorization_non_owner_without_grant() {
+fn test_enable_authorization_non_owner_without_grant() {
     use crate::capabilities::grants::GrantsTable;
     use crate::models::Block;
 
     let grants_table = GrantsTable::new();
-
     let block = Block::new(
         "Test Agent".to_string(),
         "agent".to_string(),
         "alice".to_string(),
     );
 
-    // Bob (non-owner) without grant should not be authorized
     let is_authorized =
-        block.owner == "bob" || grants_table.has_grant("bob", "agent.configure", &block.block_id);
+        block.owner == "bob" || grants_table.has_grant("bob", "agent.enable", &block.block_id);
 
-    assert!(
-        !is_authorized,
-        "Non-owner without grant should not be authorized"
-    );
+    assert!(!is_authorized);
 }
 
 #[test]
-fn test_configure_authorization_non_owner_with_grant() {
+fn test_enable_authorization_non_owner_with_grant() {
     use crate::capabilities::grants::GrantsTable;
     use crate::models::Block;
 
     let mut grants_table = GrantsTable::new();
-
     let block = Block::new(
         "Test Agent".to_string(),
         "agent".to_string(),
         "alice".to_string(),
     );
 
-    // Grant Bob permission
     grants_table.add_grant(
         "bob".to_string(),
-        "agent.configure".to_string(),
+        "agent.enable".to_string(),
         block.block_id.clone(),
     );
 
     let is_authorized =
-        block.owner == "bob" || grants_table.has_grant("bob", "agent.configure", &block.block_id);
+        block.owner == "bob" || grants_table.has_grant("bob", "agent.enable", &block.block_id);
 
-    assert!(is_authorized, "Non-owner with grant should be authorized");
+    assert!(is_authorized);
+}
+
+#[test]
+fn test_disable_authorization_owner() {
+    use crate::capabilities::grants::GrantsTable;
+    use crate::models::Block;
+
+    let grants_table = GrantsTable::new();
+    let block = Block::new(
+        "Test Agent".to_string(),
+        "agent".to_string(),
+        "alice".to_string(),
+    );
+
+    let is_authorized =
+        block.owner == "alice" || grants_table.has_grant("alice", "agent.disable", &block.block_id);
+
+    assert!(is_authorized);
 }

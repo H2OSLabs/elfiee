@@ -158,7 +158,12 @@ pub fn format_context_as_markdown(items: &[ContextItem]) -> String {
 mod tests {
     use super::*;
 
-    fn create_test_block(id: &str, name: &str, block_type: &str, contents: serde_json::Value) -> Block {
+    fn create_test_block(
+        id: &str,
+        name: &str,
+        block_type: &str,
+        contents: serde_json::Value,
+    ) -> Block {
         Block {
             block_id: id.to_string(),
             name: name.to_string(),
@@ -197,10 +202,9 @@ mod tests {
             "markdown",
             serde_json::json!({"markdown": "# Parent"}),
         );
-        parent.children.insert(
-            "reference".to_string(),
-            vec!["block-child".to_string()],
-        );
+        parent
+            .children
+            .insert("reference".to_string(), vec!["block-child".to_string()]);
 
         let child = create_test_block(
             "block-child",
@@ -230,10 +234,9 @@ mod tests {
             "markdown",
             serde_json::json!({"markdown": "L0"}),
         );
-        level0.children.insert(
-            "reference".to_string(),
-            vec!["block-1".to_string()],
-        );
+        level0
+            .children
+            .insert("reference".to_string(), vec!["block-1".to_string()]);
 
         let mut level1 = create_test_block(
             "block-1",
@@ -241,10 +244,9 @@ mod tests {
             "markdown",
             serde_json::json!({"markdown": "L1"}),
         );
-        level1.children.insert(
-            "reference".to_string(),
-            vec!["block-2".to_string()],
-        );
+        level1
+            .children
+            .insert("reference".to_string(), vec!["block-2".to_string()]);
 
         let level2 = create_test_block(
             "block-2",
@@ -273,10 +275,9 @@ mod tests {
             "markdown",
             serde_json::json!({"markdown": "A"}),
         );
-        block_a.children.insert(
-            "reference".to_string(),
-            vec!["block-b".to_string()],
-        );
+        block_a
+            .children
+            .insert("reference".to_string(), vec!["block-b".to_string()]);
 
         let mut block_b = create_test_block(
             "block-b",
@@ -285,10 +286,9 @@ mod tests {
             serde_json::json!({"markdown": "B"}),
         );
         // Circular reference back to A
-        block_b.children.insert(
-            "reference".to_string(),
-            vec!["block-a".to_string()],
-        );
+        block_b
+            .children
+            .insert("reference".to_string(), vec!["block-a".to_string()]);
 
         let mut blocks: HashMap<String, Block> = HashMap::new();
         blocks.insert("block-a".to_string(), block_a.clone());

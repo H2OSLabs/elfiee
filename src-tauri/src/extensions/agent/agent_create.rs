@@ -1,51 +1,48 @@
-//! Handler for agent.create capability
+//! Handler for agent.create capability (Phase 2)
+//!
+//! Creates an Agent Block for external project integration.
+//! The handler generates the Block creation event; actual I/O (symlink, MCP config)
+//! is performed by the Tauri command layer.
 
 use crate::capabilities::core::{create_event, CapResult};
 use crate::models::{Block, BlockMetadata, Command, Event};
 use capability_macros::capability;
 
-use super::{AgentConfig, AgentCreatePayload};
+use super::{AgentContents, AgentCreateV2Payload, AgentStatus};
 
-/// Handler for agent.create capability.
+/// Handler for agent.create capability (Phase 2).
 ///
-/// Creates an Agent Block with the following behavior:
-/// 1. Generates a unique editor_id for the agent (format: "agent-{uuid}")
-/// 2. Creates the Agent Block with AgentConfig in contents
-///
-/// Note: In a full implementation, this would also emit an editor.create event
-/// to create the associated Editor entity. For now, we only create the block.
+/// Creates an Agent Block for external project integration:
+/// 1. Validates the payload (target_project_id required)
+/// 2. Creates an Agent Block with AgentContents in contents
+/// 3. Sets initial status to Enabled (Tauri command will perform I/O)
 ///
 /// # Payload
-/// Uses `AgentCreatePayload` with name, provider, model, api_key_env, system_prompt.
+/// Uses `AgentCreateV2Payload` with target_project_id (required) and name (optional).
+///
+/// # Note
+/// Uniqueness check (no duplicate agent for same project) and target project validation
+/// are performed at the Tauri command layer, since the handler cannot access StateProjector.
 #[capability(id = "agent.create", target = "core/*")]
 fn handle_agent_create(cmd: &Command, _block: Option<&Block>) -> CapResult<Vec<Event>> {
-    let payload: AgentCreatePayload = serde_json::from_value(cmd.payload.clone())
+    let payload: AgentCreateV2Payload = serde_json::from_value(cmd.payload.clone())
         .map_err(|e| format!("Invalid payload for agent.create: {}", e))?;
 
     // Validate required fields
-    if payload.name.trim().is_empty() {
-        return Err("Agent name cannot be empty".to_string());
-    }
-    if payload.provider.trim().is_empty() {
-        return Err("Provider cannot be empty".to_string());
-    }
-    if payload.model.trim().is_empty() {
-        return Err("Model cannot be empty".to_string());
-    }
-    if payload.api_key_env.trim().is_empty() {
-        return Err("API key environment variable name cannot be empty".to_string());
+    if payload.target_project_id.trim().is_empty() {
+        return Err("target_project_id cannot be empty".to_string());
     }
 
-    // Generate agent editor_id
-    let agent_editor_id = format!("agent-{}", uuid::Uuid::new_v4());
+    let name = payload
+        .name
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "elfiee".to_string());
 
-    // Create AgentConfig
-    let config = AgentConfig {
-        editor_id: agent_editor_id,
-        provider: payload.provider,
-        model: payload.model,
-        api_key_env: payload.api_key_env,
-        system_prompt: payload.system_prompt.unwrap_or_default(),
+    // Create AgentContents
+    let contents = AgentContents {
+        name: name.clone(),
+        target_project_id: payload.target_project_id.clone(),
+        status: AgentStatus::Enabled,
     };
 
     // Generate block_id for the new Agent Block
@@ -54,10 +51,10 @@ fn handle_agent_create(cmd: &Command, _block: Option<&Block>) -> CapResult<Vec<E
     // Create metadata with timestamps
     let metadata = BlockMetadata::new();
 
-    // Serialize AgentConfig and add source field for consistency with core.create
-    let mut contents = serde_json::to_value(&config)
-        .map_err(|e| format!("Failed to serialize AgentConfig: {}", e))?;
-    if let Some(obj) = contents.as_object_mut() {
+    // Serialize AgentContents and add source field for consistency with core.create
+    let mut contents_json = serde_json::to_value(&contents)
+        .map_err(|e| format!("Failed to serialize AgentContents: {}", e))?;
+    if let Some(obj) = contents_json.as_object_mut() {
         obj.insert("source".to_string(), serde_json::json!("outline"));
     }
 
@@ -66,10 +63,10 @@ fn handle_agent_create(cmd: &Command, _block: Option<&Block>) -> CapResult<Vec<E
         block_id,
         "agent.create",
         serde_json::json!({
-            "name": payload.name,
+            "name": name,
             "type": "agent",
             "owner": cmd.editor_id,
-            "contents": contents,
+            "contents": contents_json,
             "children": {},
             "metadata": metadata.to_json()
         }),
@@ -86,16 +83,13 @@ mod tests {
     use crate::models::Command;
 
     #[test]
-    fn test_agent_create_success() {
+    fn test_agent_create_v2_success() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "name": "My Assistant",
-                "provider": "anthropic",
-                "model": "claude-sonnet-4-20250514",
-                "api_key_env": "ANTHROPIC_API_KEY"
+                "target_project_id": "dir-block-uuid-123"
             }),
         );
 
@@ -106,32 +100,27 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         let event = &events[0];
-        assert_eq!(event.value["name"], "My Assistant");
+        assert_eq!(event.value["name"], "elfiee"); // default name
         assert_eq!(event.value["type"], "agent");
         assert_eq!(event.value["owner"], "alice");
 
-        // Verify contents has AgentConfig fields
+        // Verify contents has AgentContents fields
         let contents = &event.value["contents"];
-        assert_eq!(contents["provider"], "anthropic");
-        assert_eq!(contents["model"], "claude-sonnet-4-20250514");
-        assert_eq!(contents["api_key_env"], "ANTHROPIC_API_KEY");
-        assert!(contents["editor_id"].as_str().unwrap().starts_with("agent-"));
-        // Verify source field for consistency with core.create
+        assert_eq!(contents["name"], "elfiee");
+        assert_eq!(contents["target_project_id"], "dir-block-uuid-123");
+        assert_eq!(contents["status"], "enabled");
         assert_eq!(contents["source"], "outline");
     }
 
     #[test]
-    fn test_agent_create_with_system_prompt() {
+    fn test_agent_create_v2_with_custom_name() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "name": "Code Assistant",
-                "provider": "anthropic",
-                "model": "claude-sonnet-4-20250514",
-                "api_key_env": "ANTHROPIC_API_KEY",
-                "system_prompt": "You are a helpful coding assistant."
+                "target_project_id": "dir-block-uuid-123",
+                "name": "my-agent"
             }),
         );
 
@@ -139,93 +128,68 @@ mod tests {
         assert!(result.is_ok());
 
         let events = result.unwrap();
-        let contents = &events[0].value["contents"];
-        assert_eq!(contents["system_prompt"], "You are a helpful coding assistant.");
+        let event = &events[0];
+        assert_eq!(event.value["name"], "my-agent");
+        assert_eq!(event.value["contents"]["name"], "my-agent");
     }
 
     #[test]
-    fn test_agent_create_empty_name_fails() {
+    fn test_agent_create_v2_default_name_when_none() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "name": "  ",
-                "provider": "anthropic",
-                "model": "claude-sonnet-4-20250514",
-                "api_key_env": "ANTHROPIC_API_KEY"
+                "target_project_id": "dir-block-uuid-123"
+            }),
+        );
+
+        let result = handle_agent_create(&cmd, None).unwrap();
+        assert_eq!(result[0].value["name"], "elfiee");
+    }
+
+    #[test]
+    fn test_agent_create_v2_empty_name_uses_default() {
+        let cmd = Command::new(
+            "alice".to_string(),
+            "agent.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "target_project_id": "dir-block-uuid-123",
+                "name": "  "
+            }),
+        );
+
+        let result = handle_agent_create(&cmd, None).unwrap();
+        assert_eq!(result[0].value["name"], "elfiee");
+    }
+
+    #[test]
+    fn test_agent_create_v2_empty_target_project_id_fails() {
+        let cmd = Command::new(
+            "alice".to_string(),
+            "agent.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "target_project_id": "  "
             }),
         );
 
         let result = handle_agent_create(&cmd, None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("name cannot be empty"));
+        assert!(result
+            .unwrap_err()
+            .contains("target_project_id cannot be empty"));
     }
 
     #[test]
-    fn test_agent_create_empty_provider_fails() {
+    fn test_agent_create_v2_missing_target_project_id_fails() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "name": "Assistant",
-                "provider": "",
-                "model": "claude-sonnet-4-20250514",
-                "api_key_env": "ANTHROPIC_API_KEY"
-            }),
-        );
-
-        let result = handle_agent_create(&cmd, None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Provider cannot be empty"));
-    }
-
-    #[test]
-    fn test_agent_create_generates_unique_editor_id() {
-        let cmd1 = Command::new(
-            "alice".to_string(),
-            "agent.create".to_string(),
-            "".to_string(),
-            serde_json::json!({
-                "name": "Agent 1",
-                "provider": "anthropic",
-                "model": "claude-sonnet-4-20250514",
-                "api_key_env": "KEY"
-            }),
-        );
-
-        let cmd2 = Command::new(
-            "alice".to_string(),
-            "agent.create".to_string(),
-            "".to_string(),
-            serde_json::json!({
-                "name": "Agent 2",
-                "provider": "anthropic",
-                "model": "claude-sonnet-4-20250514",
-                "api_key_env": "KEY"
-            }),
-        );
-
-        let result1 = handle_agent_create(&cmd1, None).unwrap();
-        let result2 = handle_agent_create(&cmd2, None).unwrap();
-
-        let editor_id1 = result1[0].value["contents"]["editor_id"].as_str().unwrap();
-        let editor_id2 = result2[0].value["contents"]["editor_id"].as_str().unwrap();
-
-        // Each agent should have a unique editor_id
-        assert_ne!(editor_id1, editor_id2);
-    }
-
-    #[test]
-    fn test_agent_create_missing_required_field_fails() {
-        let cmd = Command::new(
-            "alice".to_string(),
-            "agent.create".to_string(),
-            "".to_string(),
-            serde_json::json!({
-                "name": "Assistant"
-                // Missing provider, model, api_key_env
+                "name": "my-agent"
             }),
         );
 
@@ -235,24 +199,79 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_create_generates_metadata() {
+    fn test_agent_create_v2_event_structure() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "name": "Assistant",
-                "provider": "anthropic",
-                "model": "claude-sonnet-4-20250514",
-                "api_key_env": "KEY"
+                "target_project_id": "proj-123"
             }),
         );
 
         let result = handle_agent_create(&cmd, None).unwrap();
-        let metadata = &result[0].value["metadata"];
+        let event = &result[0];
 
-        // Should have auto-generated timestamps
-        assert!(metadata["created_at"].is_string());
-        assert!(metadata["updated_at"].is_string());
+        // Event entity should be a new block_id (UUID format)
+        assert!(!event.entity.is_empty());
+        assert!(event.entity.contains('-')); // UUID format
+
+        // Event attribute should be "{editor_id}/agent.create"
+        assert_eq!(event.attribute, "alice/agent.create");
+
+        // Event value should contain full Block initial state
+        let value = &event.value;
+        assert!(value.get("name").is_some());
+        assert!(value.get("type").is_some());
+        assert!(value.get("owner").is_some());
+        assert!(value.get("contents").is_some());
+        assert!(value.get("children").is_some());
+        assert!(value.get("metadata").is_some());
+
+        // Metadata should have timestamps
+        let metadata = &value["metadata"];
+        assert!(metadata.get("created_at").is_some());
+        assert!(metadata.get("updated_at").is_some());
+    }
+
+    #[test]
+    fn test_agent_create_v2_generates_unique_block_ids() {
+        let cmd1 = Command::new(
+            "alice".to_string(),
+            "agent.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "target_project_id": "proj-1"
+            }),
+        );
+
+        let cmd2 = Command::new(
+            "alice".to_string(),
+            "agent.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "target_project_id": "proj-2"
+            }),
+        );
+
+        let result1 = handle_agent_create(&cmd1, None).unwrap();
+        let result2 = handle_agent_create(&cmd2, None).unwrap();
+
+        assert_ne!(result1[0].entity, result2[0].entity);
+    }
+
+    #[test]
+    fn test_agent_create_v2_initial_status_is_enabled() {
+        let cmd = Command::new(
+            "alice".to_string(),
+            "agent.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "target_project_id": "proj-123"
+            }),
+        );
+
+        let result = handle_agent_create(&cmd, None).unwrap();
+        assert_eq!(result[0].value["contents"]["status"], "enabled");
     }
 }

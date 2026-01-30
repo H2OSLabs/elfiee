@@ -32,17 +32,17 @@ use regex::Regex;
 /// # Returns
 /// Vec of parsed commands or parse error
 pub fn parse_structured_output(response: &str) -> Result<Vec<ProposedCommand>, LlmError> {
-    let command_regex =
-        Regex::new(r"<command>([\s\S]*?)</command>").map_err(|e| LlmError::ParseError(e.to_string()))?;
+    let command_regex = Regex::new(r"<command>([\s\S]*?)</command>")
+        .map_err(|e| LlmError::ParseError(e.to_string()))?;
 
     let cap_id_regex =
         Regex::new(r"<cap_id>(.*?)</cap_id>").map_err(|e| LlmError::ParseError(e.to_string()))?;
-    let block_id_regex =
-        Regex::new(r"<block_id>(.*?)</block_id>").map_err(|e| LlmError::ParseError(e.to_string()))?;
-    let payload_regex =
-        Regex::new(r"<payload>([\s\S]*?)</payload>").map_err(|e| LlmError::ParseError(e.to_string()))?;
-    let desc_regex =
-        Regex::new(r"<description>(.*?)</description>").map_err(|e| LlmError::ParseError(e.to_string()))?;
+    let block_id_regex = Regex::new(r"<block_id>(.*?)</block_id>")
+        .map_err(|e| LlmError::ParseError(e.to_string()))?;
+    let payload_regex = Regex::new(r"<payload>([\s\S]*?)</payload>")
+        .map_err(|e| LlmError::ParseError(e.to_string()))?;
+    let desc_regex = Regex::new(r"<description>(.*?)</description>")
+        .map_err(|e| LlmError::ParseError(e.to_string()))?;
 
     let mut commands = Vec::new();
 
