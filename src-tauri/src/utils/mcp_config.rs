@@ -146,11 +146,16 @@ pub fn resolve_template(template: &Value, elf_path: &str) -> Value {
 
 /// Build the default MCP server config for Elfiee.
 ///
-/// Returns the server config (not the full mcpServers wrapper) with `{elf_path}` resolved.
-pub fn build_elfiee_server_config(elf_path: &str) -> Value {
+/// The Elfiee MCP server runs as an embedded SSE server inside the GUI process
+/// on `http://127.0.0.1:{MCP_PORT}/sse`. Claude Code connects to it via SSE transport.
+///
+/// The `_elf_path` parameter is reserved for future use (standalone CLI mode).
+/// Currently ignored because the embedded server shares AppState with the GUI.
+pub fn build_elfiee_server_config(_elf_path: &str) -> Value {
+    let url = format!("http://127.0.0.1:{}/sse", crate::mcp::MCP_PORT);
     serde_json::json!({
-        "command": "elfiee",
-        "args": ["mcp-server", "--elf", elf_path]
+        "type": "sse",
+        "url": url
     })
 }
 
@@ -426,11 +431,10 @@ mod tests {
     #[test]
     fn test_build_elfiee_server_config() {
         let config = build_elfiee_server_config("/home/user/project.elf");
-        assert_eq!(config["command"], "elfiee");
-        let args = config["args"].as_array().unwrap();
-        assert_eq!(args.len(), 3);
-        assert_eq!(args[0], "mcp-server");
-        assert_eq!(args[1], "--elf");
-        assert_eq!(args[2], "/home/user/project.elf");
+        assert_eq!(config["type"], "sse");
+        assert_eq!(
+            config["url"],
+            format!("http://127.0.0.1:{}/sse", crate::mcp::MCP_PORT)
+        );
     }
 }

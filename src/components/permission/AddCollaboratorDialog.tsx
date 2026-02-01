@@ -52,7 +52,8 @@ export const AddCollaboratorDialog = ({
   onOpenChange,
   onSuccess,
 }: AddCollaboratorDialogProps) => {
-  const { createEditor, grantCapability, getActiveEditor } = useAppStore()
+  const { createEditor, grantCapability, getActiveEditor, createAgent } =
+    useAppStore()
   const [activeTab, setActiveTab] = useState<'existing' | 'new'>('existing')
 
   // Existing User State
@@ -159,6 +160,16 @@ export const AddCollaboratorDialog = ({
         blockId,
         granterId
       )
+
+      // 3. If Bot on a directory block, also create Agent (MCP integration)
+      if (newEditorType === 'Bot' && blockType === 'directory') {
+        try {
+          await createAgent(fileId, blockId, newEditor.name)
+        } catch (agentError) {
+          // Agent creation is best-effort — editor was already created successfully
+          console.warn('Agent creation failed:', agentError)
+        }
+      }
 
       toast.success(`Created and added ${newEditor.name}`)
       onSuccess?.(newEditor)

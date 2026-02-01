@@ -183,7 +183,7 @@ const DocumentEditor = () => {
       </div>
 
       {/* Column 2: File Panel - Fixed width, NEVER shrinks */}
-      <div className="hidden h-full min-w-[240px] shrink-0 overflow-hidden border-r border-gray-200 bg-[#F9FAFB] lg:flex">
+      <div className="hidden h-full min-w-[240px] max-w-[300px] shrink-0 overflow-hidden border-r border-gray-200 bg-[#F9FAFB] lg:flex">
         <FilePanel />
       </div>
 

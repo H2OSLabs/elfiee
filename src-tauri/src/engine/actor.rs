@@ -385,10 +385,11 @@ impl ElfileEngineActor {
             .ok_or_else(|| format!("Unknown capability: {}", cmd.cap_id))?;
 
         // 2. Get block (None for create operations, Some for others)
-        // System-level operations like core.create, editor.create, and editor.delete don't require a block
+        // System-level operations like core.create, editor.create, editor.delete, and agent.create don't require a block
         let mut block_opt = if cmd.cap_id == "core.create"
             || cmd.cap_id == "editor.create"
             || cmd.cap_id == "editor.delete"
+            || cmd.cap_id == "agent.create"
         {
             None
         } else {

@@ -2,6 +2,7 @@ use crate::elf::ElfArchive;
 use crate::engine::EngineManager;
 use dashmap::DashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 /// Information about an open file
@@ -28,6 +29,10 @@ pub struct AppState {
     /// This is UI state and is NOT persisted to .elf file
     /// Using DashMap for thread-safe concurrent access
     pub active_editors: Arc<DashMap<String, String>>,
+
+    /// Active MCP SSE connection count.
+    /// Used to detect when all clients disconnect so we can auto-disable agent blocks.
+    pub sse_connection_count: Arc<AtomicUsize>,
 }
 
 impl AppState {
@@ -37,6 +42,7 @@ impl AppState {
             engine_manager: EngineManager::new(),
             files: Arc::new(DashMap::new()),
             active_editors: Arc::new(DashMap::new()),
+            sse_connection_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 

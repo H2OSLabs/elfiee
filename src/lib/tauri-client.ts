@@ -17,6 +17,10 @@ import {
   type GrantPayload,
   type RevokePayload,
   type FileMetadata,
+  type AgentCreateV2Payload,
+  type AgentCreateResult,
+  type AgentEnableResult,
+  type AgentDisableResult,
 } from '@/bindings'
 import { sortEventsByVectorClock } from '@/utils/event-utils'
 
@@ -1050,6 +1054,78 @@ export class TerminalOperations {
 }
 
 /**
+ * Agent Operations (Phase 2)
+ *
+ * These operations manage Agent Blocks that integrate external projects
+ * with Claude Code via symlinks and MCP configuration injection.
+ */
+export class AgentOperations {
+  /**
+   * Create an Agent Block for an external project and auto-enable it.
+   *
+   * This validates the target project, creates the Agent Block, then
+   * performs I/O (symlink creation + MCP config merge).
+   *
+   * @param fileId - The .elf file ID
+   * @param payload - Agent creation payload (target_project_id required, name optional)
+   * @returns AgentCreateResult with block ID, status, and restart hint
+   */
+  static async createAgent(
+    fileId: string,
+    payload: AgentCreateV2Payload
+  ): Promise<AgentCreateResult> {
+    const result = await commands.agentCreate(fileId, payload)
+    if (result.status === 'ok') {
+      return result.data
+    } else {
+      throw new Error(result.error)
+    }
+  }
+
+  /**
+   * Enable an Agent Block: recreate symlink and inject MCP config.
+   *
+   * Idempotent: safe to call on an already-enabled agent to refresh configuration.
+   *
+   * @param fileId - The .elf file ID
+   * @param agentBlockId - The Agent Block ID to enable
+   * @returns AgentEnableResult with status, restart hint, and any warnings
+   */
+  static async enableAgent(
+    fileId: string,
+    agentBlockId: string
+  ): Promise<AgentEnableResult> {
+    const result = await commands.agentEnable(fileId, agentBlockId)
+    if (result.status === 'ok') {
+      return result.data
+    } else {
+      throw new Error(result.error)
+    }
+  }
+
+  /**
+   * Disable an Agent Block: remove symlink and MCP config.
+   *
+   * Idempotent: safe to call on an already-disabled agent.
+   *
+   * @param fileId - The .elf file ID
+   * @param agentBlockId - The Agent Block ID to disable
+   * @returns AgentDisableResult with status and any warnings
+   */
+  static async disableAgent(
+    fileId: string,
+    agentBlockId: string
+  ): Promise<AgentDisableResult> {
+    const result = await commands.agentDisable(fileId, agentBlockId)
+    if (result.status === 'ok') {
+      return result.data
+    } else {
+      throw new Error(result.error)
+    }
+  }
+}
+
+/**
  * Main Tauri Client export
  */
 export const TauriClient = {
@@ -1059,4 +1135,5 @@ export const TauriClient = {
   directory: DirectoryOperations,
   event: EventOperations,
   terminal: TerminalOperations,
+  agent: AgentOperations,
 }

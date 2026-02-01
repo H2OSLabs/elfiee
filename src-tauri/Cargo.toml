@@ -54,6 +54,10 @@ schemars = "1"
 async-trait = "0.1"
 tokio-util = "0.7"
 
+# Windows junction support (no admin privileges needed for symlink-like dirs)
+[target.'cfg(windows)'.dependencies]
+junction = "1"
+
 # GUI binary (Tauri app)
 [[bin]]
 name = "elfiee-app"
