@@ -50,12 +50,10 @@ fn create_symlink_dir(src: &Path, dst: &Path) -> Result<(), String> {
 
     #[cfg(windows)]
     {
-        // On Windows, use directory junction (no admin privileges required)
-        // junction crate is available in the Cargo.toml; if not, use symlink_dir
-        // which may require developer mode or admin privileges.
-        std::os::windows::fs::symlink_dir(src, dst).map_err(|e| {
+        // On Windows, use directory junction (no admin privileges required).
+        junction::create(src, dst).map_err(|e| {
             format!(
-                "Failed to create symlink {} -> {}: {}. On Windows, enable Developer Mode or run as admin.",
+                "Failed to create junction {} -> {}: {}",
                 dst.display(),
                 src.display(),
                 e
@@ -81,21 +79,17 @@ fn remove_symlink_dir(path: &Path) -> Result<(), String> {
 
     #[cfg(windows)]
     {
-        // On Windows, symlink_dir creates a directory symlink
-        std::fs::remove_dir(path).map_err(|e| {
-            format!(
-                "Failed to remove symlink/junction {}: {}",
-                path.display(),
-                e
-            )
-        })?;
+        // On Windows, junctions are removed via remove_dir
+        junction::delete(path)
+            .or_else(|_| std::fs::remove_dir(path))
+            .map_err(|e| format!("Failed to remove junction {}: {}", path.display(), e))?;
     }
 
     Ok(())
 }
 
 /// Get external path from a directory block's metadata.
-fn get_external_path(block: &crate::models::Block) -> Result<String, String> {
+pub(crate) fn get_external_path(block: &crate::models::Block) -> Result<String, String> {
     block
         .metadata
         .custom
@@ -148,12 +142,19 @@ fn perform_enable_io(
         warnings.push(format!("Failed to create symlink: {}", e));
     }
 
-    // 2. Merge MCP config
-    let mcp_config_path = Path::new(external_path).join(".claude").join("mcp.json");
+    // 2. Merge MCP config to both locations:
+    //    - .mcp.json (project root): Claude Code's project-scope path
+    //    - .claude/mcp.json: fallback for compatibility
     let server_config = mcp_config::build_elfiee_server_config(elf_file_path);
 
-    if let Err(e) = mcp_config::merge_server(&mcp_config_path, "elfiee", server_config) {
-        warnings.push(format!("Failed to write MCP config: {}", e));
+    let mcp_project_path = Path::new(external_path).join(".mcp.json");
+    if let Err(e) = mcp_config::merge_server(&mcp_project_path, "elfiee", server_config.clone()) {
+        warnings.push(format!("Failed to write .mcp.json: {}", e));
+    }
+
+    let mcp_claude_path = Path::new(external_path).join(".claude").join("mcp.json");
+    if let Err(e) = mcp_config::merge_server(&mcp_claude_path, "elfiee", server_config) {
+        warnings.push(format!("Failed to write .claude/mcp.json: {}", e));
     }
 
     let success = warnings.is_empty();
@@ -163,7 +164,7 @@ fn perform_enable_io(
 /// Perform disable I/O: remove symlink + remove MCP config.
 ///
 /// Returns a list of warnings for partial failures.
-fn perform_disable_io(external_path: &str) -> Vec<String> {
+pub(crate) fn perform_disable_io(external_path: &str) -> Vec<String> {
     let mut warnings = Vec::new();
 
     // 1. Remove symlink
@@ -176,11 +177,15 @@ fn perform_disable_io(external_path: &str) -> Vec<String> {
         warnings.push(format!("Failed to remove symlink: {}", e));
     }
 
-    // 2. Remove MCP config entry
-    let mcp_config_path = Path::new(external_path).join(".claude").join("mcp.json");
+    // 2. Remove MCP config entry from both locations
+    let mcp_project_path = Path::new(external_path).join(".mcp.json");
+    if let Err(e) = mcp_config::remove_server(&mcp_project_path, "elfiee") {
+        warnings.push(format!("Failed to remove .mcp.json: {}", e));
+    }
 
-    if let Err(e) = mcp_config::remove_server(&mcp_config_path, "elfiee") {
-        warnings.push(format!("Failed to remove MCP config: {}", e));
+    let mcp_claude_path = Path::new(external_path).join(".claude").join("mcp.json");
+    if let Err(e) = mcp_config::remove_server(&mcp_claude_path, "elfiee") {
+        warnings.push(format!("Failed to remove .claude/mcp.json: {}", e));
     }
 
     warnings

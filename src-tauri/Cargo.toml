@@ -55,6 +55,10 @@ tokio-util = "0.7"
 regex = "1.10"
 reqwest = { version = "0.12", features = ["json"] }
 
+# Windows junction support (no admin privileges needed for symlink-like dirs)
+[target.'cfg(windows)'.dependencies]
+junction = "1"
+
 # GUI binary (Tauri app)
 [[bin]]
 name = "elfiee-app"

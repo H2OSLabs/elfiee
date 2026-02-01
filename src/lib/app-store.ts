@@ -6,7 +6,17 @@
 
 import { create } from 'zustand'
 import { TauriClient } from './tauri-client'
-import type { Editor, Block, FileMetadata, Event, Grant } from '@/bindings'
+import type {
+  Editor,
+  Block,
+  FileMetadata,
+  Event,
+  Grant,
+  AgentCreateV2Payload,
+  AgentCreateResult,
+  AgentEnableResult,
+  AgentDisableResult,
+} from '@/bindings'
 import { toast } from 'sonner'
 import {
   buildTreeFromEntries,
@@ -233,6 +243,22 @@ interface AppStore {
     blockId: string,
     editorId?: string
   ) => Promise<void>
+
+  // Agent operations
+  createAgent: (
+    fileId: string,
+    targetProjectId: string,
+    name?: string
+  ) => Promise<AgentCreateResult>
+  enableAgent: (
+    fileId: string,
+    agentBlockId: string
+  ) => Promise<AgentEnableResult>
+  disableAgent: (
+    fileId: string,
+    agentBlockId: string
+  ) => Promise<AgentDisableResult>
+  getAgentBlocks: (fileId: string) => Block[]
 
   // Computed state
   selectedBlockId: string | null
@@ -1367,5 +1393,76 @@ export const useAppStore = create<AppStore>((set, get) => ({
       console.error(`Failed to close terminal session: ${errorMessage}`)
       throw error
     }
+  },
+
+  // Agent operations
+  createAgent: async (
+    fileId: string,
+    targetProjectId: string,
+    name?: string
+  ) => {
+    try {
+      const payload: AgentCreateV2Payload = {
+        target_project_id: targetProjectId,
+        name: name || null,
+      }
+      const result = await TauriClient.agent.createAgent(fileId, payload)
+      // Reload blocks to reflect the new Agent Block
+      await get().loadBlocks(fileId)
+      toast.success(result.message)
+      if (result.needs_restart) {
+        toast.info('Please restart Claude Code to apply changes')
+      }
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to create agent: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  enableAgent: async (fileId: string, agentBlockId: string) => {
+    try {
+      const result = await TauriClient.agent.enableAgent(fileId, agentBlockId)
+      // Reload blocks to reflect updated agent status
+      await get().loadBlocks(fileId)
+      toast.success(result.message)
+      if (result.warnings.length > 0) {
+        result.warnings.forEach((w) => toast.warning(w))
+      }
+      if (result.needs_restart) {
+        toast.info('Please restart Claude Code to apply changes')
+      }
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to enable agent: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  disableAgent: async (fileId: string, agentBlockId: string) => {
+    try {
+      const result = await TauriClient.agent.disableAgent(fileId, agentBlockId)
+      // Reload blocks to reflect updated agent status
+      await get().loadBlocks(fileId)
+      toast.success(result.message)
+      if (result.warnings.length > 0) {
+        result.warnings.forEach((w) => toast.warning(w))
+      }
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to disable agent: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  getAgentBlocks: (fileId: string) => {
+    const blocks = get().getBlocks(fileId)
+    return blocks.filter((b) => b.block_type === 'agent')
   },
 }))

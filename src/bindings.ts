@@ -994,6 +994,67 @@ export const commands = {
       else return { status: 'error', error: e as any }
     }
   },
+  /**
+   * Create an Agent Block for an external project and auto-enable it.
+   *
+   * This command:
+   * 1. Validates the target project (Dir Block exists, has external_path, has .claude/)
+   * 2. Checks uniqueness (no existing agent for same project)
+   * 3. Creates the Agent Block via engine
+   * 4. Performs I/O: creates symlink + merges MCP config
+   */
+  async agentCreate(
+    fileId: string,
+    payload: AgentCreateV2Payload
+  ): Promise<Result<AgentCreateResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('agent_create', { fileId, payload }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Enable an Agent Block: recreate symlink and inject MCP config.
+   *
+   * Idempotent: can be called on an already-enabled agent to refresh configuration.
+   */
+  async agentEnable(
+    fileId: string,
+    agentBlockId: string
+  ): Promise<Result<AgentEnableResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('agent_enable', { fileId, agentBlockId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Disable an Agent Block: remove symlink and MCP config.
+   *
+   * Idempotent: can be called on an already-disabled agent.
+   */
+  async agentDisable(
+    fileId: string,
+    agentBlockId: string
+  ): Promise<Result<AgentDisableResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('agent_disable', { fileId, agentBlockId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
 }
 
 /** user-defined events **/
@@ -1002,6 +1063,139 @@ export const commands = {
 
 /** user-defined types **/
 
+/**
+ * Phase 2 Agent Block contents, storing project-level AI integration config.
+ *
+ * Coexists with Phase 1's `AgentConfig` (LLM direct call config).
+ * Stored in `Block.contents`.
+ */
+export type AgentContents = {
+  /**
+   * Agent display name (default: "elfiee")
+   */
+  name: string
+  /**
+   * Associated external project Dir Block ID.
+   *
+   * Used to look up the Dir Block in StateProjector,
+   * then get the physical path from `metadata.custom["external_root_path"]`.
+   */
+  target_project_id: string
+  /**
+   * Agent current status
+   */
+  status: AgentStatus
+}
+/**
+ * Result type for agent.create Tauri command
+ */
+export type AgentCreateResult = {
+  /**
+   * Created Agent Block ID
+   */
+  agent_block_id: string
+  /**
+   * Agent status after creation
+   */
+  status: AgentStatus
+  /**
+   * Whether the user needs to restart Claude Code
+   */
+  needs_restart: boolean
+  /**
+   * Human-readable message
+   */
+  message: string
+}
+/**
+ * Payload for Phase 2 agent.create capability
+ */
+export type AgentCreateV2Payload = {
+  /**
+   * Agent display name (optional, default: "elfiee")
+   */
+  name?: string | null
+  /**
+   * Associated external project Dir Block ID (required)
+   */
+  target_project_id: string
+}
+/**
+ * Payload for agent.disable capability
+ */
+export type AgentDisablePayload = {
+  /**
+   * Agent Block ID (required)
+   */
+  agent_block_id: string
+}
+/**
+ * Result type for agent.disable Tauri command
+ */
+export type AgentDisableResult = {
+  /**
+   * Agent Block ID
+   */
+  agent_block_id: string
+  /**
+   * Agent status after disable
+   */
+  status: AgentStatus
+  /**
+   * Human-readable message
+   */
+  message: string
+  /**
+   * Warnings for partial failures
+   */
+  warnings: string[]
+}
+/**
+ * Payload for agent.enable capability
+ */
+export type AgentEnablePayload = {
+  /**
+   * Agent Block ID (required)
+   */
+  agent_block_id: string
+}
+/**
+ * Result type for agent.enable Tauri command
+ */
+export type AgentEnableResult = {
+  /**
+   * Agent Block ID
+   */
+  agent_block_id: string
+  /**
+   * Agent status after enable
+   */
+  status: AgentStatus
+  /**
+   * Whether the user needs to restart Claude Code
+   */
+  needs_restart: boolean
+  /**
+   * Human-readable message
+   */
+  message: string
+  /**
+   * Warnings for partial failures (e.g. symlink OK but MCP config failed)
+   */
+  warnings: string[]
+}
+/**
+ * Agent enable/disable status
+ */
+export type AgentStatus =
+  /**
+   * Enabled: symlink exists, MCP config injected
+   */
+  | 'enabled'
+  /**
+   * Disabled: symlink cleaned, MCP config removed
+   */
+  | 'disabled'
 /**
  * Block 是 Elfiee 的基本内容单元。
  *
