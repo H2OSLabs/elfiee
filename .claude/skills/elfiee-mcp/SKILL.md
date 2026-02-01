@@ -73,7 +73,7 @@ Every tool (except `elfiee_file_list`) requires `project` -- the `.elf` file pat
 | `elfiee_block_link` | Link parent->child | `project`, `parent_id`, `child_id`, `relation` |
 | `elfiee_block_unlink` | Remove relation | `project`, `parent_id`, `child_id`, `relation` |
 
-Relation types: `contains`, `references`, or custom strings.
+Relation types: `contains`, `references`, `implement`, or custom strings.
 
 ### Content Read/Write
 
@@ -111,7 +111,7 @@ Relation types: `contains`, `references`, or custom strings.
 | `elfiee_grant` | Grant capability | `project`, `block_id`, `editor_id`, `cap_id` |
 | `elfiee_revoke` | Revoke capability | `project`, `block_id`, `editor_id`, `cap_id` |
 
-Capability IDs: `core.create`, `core.link`, `core.unlink`, `core.delete`, `core.grant`, `core.revoke`, `markdown.write`, `markdown.read`, `code.write`, `code.read`, `directory.create`, `directory.delete`, `directory.rename`, `directory.write`, `terminal.init`, `terminal.execute`, `terminal.save`, `terminal.close`.
+Capability IDs: `core.create`, `core.read`, `core.link`, `core.unlink`, `core.delete`, `core.grant`, `core.revoke`, `core.update_metadata`, `core.rename`, `core.change_type`, `markdown.write`, `markdown.read`, `code.write`, `code.read`, `directory.create`, `directory.delete`, `directory.rename`, `directory.write`, `directory.import`, `directory.export`, `terminal.init`, `terminal.execute`, `terminal.save`, `terminal.close`, `agent.create`, `agent.enable`, `agent.disable`.
 
 ### Editor Management
 
@@ -158,9 +158,15 @@ Use `elfiee_exec` for capabilities not covered by dedicated tools.
 5. elfiee_terminal_close(project, block_id)
 ```
 
+### Link blocks with implement relation
+
+```
+1. elfiee_block_link(project, parent_id=task_block_id, child_id=code_block_id, relation="implement")
+```
+
 ## MCP Resources
 
-Read-only data accessible via `ReadMcpResourceTool` (server: `elfiee`). Use resources for quick state inspection without calling tools.
+Read-only data accessible via `ReadMcpResourceTool` (server: `elfiee`).
 
 ### Static Resources
 
@@ -183,7 +189,11 @@ Replace `{project}` with the project path (e.g., `./my.elf`) and `{block_id}` wi
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `Project not open` | .elf file not loaded in GUI | Open file in Elfiee GUI first |
+| `Project not open` | .elf file not loaded | Open file in Elfiee GUI first, or use standalone mode |
 | `Block not found` | Invalid block_id | Use `elfiee_block_list` to get valid IDs |
-| `No active editor` | No editor session for file | GUI must have an active editor session |
-| `Engine not found` | Engine not started for file | Reopen file in GUI |
+| `No active editor` | No editor session | GUI must have an active editor session |
+| `Engine not found` | Engine not started | Reopen file in GUI |
+| `Invalid payload` | Wrong parameters | Check the tool's parameter schema |
+
+<!-- Auto-generated from src-tauri/templates/elfiee-client/skill.yaml -->
+<!-- To regenerate: update skill.yaml and run the project -->
