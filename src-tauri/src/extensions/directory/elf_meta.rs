@@ -1,12 +1,15 @@
 /// .elf/ Dir Block 初始化模块
 ///
 /// 在 create_file 时自动创建 `.elf/` Dir Block，提供系统级目录骨架。
-/// 所有 entries 均为虚拟目录（type: "directory"），不包含文件 Block。
-/// 后续模块（F7 Skills, F1 Agent, F10 Session, F16 Task）负责填充实际内容。
+/// 目录骨架为虚拟目录（type: "directory"），同时通过 `template_copy` 将
+/// elfiee-client Skill 模板文件（SKILL.md, mcp.json, capabilities.md）写入
+/// 到 Block 物理目录中。
 use crate::models::Command;
 use crate::state::AppState;
+use crate::utils::template_copy;
 use crate::utils::time::now_utc;
 use serde_json::json;
+use std::path::Path;
 
 /// `.elf/` Dir Block 的名称。
 ///
@@ -116,6 +119,28 @@ pub async fn bootstrap_elf_meta(file_id: &str, state: &AppState) -> Result<(), S
         }),
     );
     handle.process_command(grant_cmd).await?;
+
+    // Step 4: Initialize elfiee-client skill templates into the block directory.
+    //
+    // After the .elf/ block is created, `inject_block_dir` has set `_block_dir`
+    // in the block's contents. We read it back to get the physical path, then
+    // write SKILL.md, mcp.json, and capabilities.md into the directory.
+    if let Some(elf_block) = handle.get_block(elf_block_id.clone()).await {
+        if let Some(block_dir) = elf_block
+            .contents
+            .get("_block_dir")
+            .and_then(|v| v.as_str())
+        {
+            // elf_path is not needed for current SSE mode, pass empty string
+            if let Err(e) = template_copy::init_elfiee_client(Path::new(block_dir), "") {
+                // Log warning but don't fail bootstrap — templates can be retried
+                eprintln!(
+                    "Warning: Failed to initialize elfiee-client templates: {}",
+                    e
+                );
+            }
+        }
+    }
 
     Ok(())
 }
