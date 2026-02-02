@@ -4,6 +4,7 @@ pub mod checkout;
 pub mod editor;
 pub mod event;
 pub mod file;
+pub mod task;
 
 // Re-export all commands for easy registration
 pub use agent::{agent_create, agent_disable, agent_enable};
@@ -14,3 +15,4 @@ pub use file::{
     close_file, create_file, get_all_events, get_file_info, list_open_files, open_file,
     rename_file, save_file, FileMetadata,
 };
+pub use task::{commit_task, inject_hooks_for_repo, is_hooks_active, remove_hooks_for_repo};

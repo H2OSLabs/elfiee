@@ -15,6 +15,9 @@ import {
   History,
   Copy,
   Check,
+  Link2,
+  Unlink,
+  Plus,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -545,6 +548,179 @@ const TimelineTab = ({
   )
 }
 
+const LinksTab = ({
+  block,
+  fileId,
+}: {
+  block: Block | null
+  fileId: string | null
+}) => {
+  const { getBlocks, linkBlock, unlinkBlock } = useAppStore()
+  const [isAdding, setIsAdding] = useState(false)
+
+  const allBlocks = useMemo(
+    () => (fileId ? getBlocks(fileId) : []),
+    [fileId, getBlocks]
+  )
+
+  // Get linked block IDs from children.implement
+  const linkedIds = useMemo(() => {
+    if (!block?.children) return []
+    const children = block.children as Partial<Record<string, string[]>>
+    return children['implement'] || []
+  }, [block?.children])
+
+  // Resolve linked blocks
+  const linkedBlocks = useMemo(
+    () =>
+      linkedIds
+        .map((id) => allBlocks.find((b) => b.block_id === id))
+        .filter((b): b is Block => !!b),
+    [linkedIds, allBlocks]
+  )
+
+  // Available blocks for linking (exclude self and already linked)
+  const availableBlocks = useMemo(() => {
+    if (!block) return []
+    const excluded = new Set([block.block_id, ...linkedIds])
+    return allBlocks.filter(
+      (b) => !excluded.has(b.block_id) && b.block_type !== 'directory' // directories are not linkable targets
+    )
+  }, [block, linkedIds, allBlocks])
+
+  const handleLink = async (targetId: string) => {
+    if (!fileId || !block) return
+    try {
+      await linkBlock(fileId, block.block_id, targetId)
+      setIsAdding(false)
+    } catch {
+      // Error toast already shown
+    }
+  }
+
+  const handleUnlink = async (targetId: string) => {
+    if (!fileId || !block) return
+    try {
+      await unlinkBlock(fileId, block.block_id, targetId)
+    } catch {
+      // Error toast already shown
+    }
+  }
+
+  if (!block || !fileId) {
+    return (
+      <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border/50 text-center">
+        <div>
+          <p className="text-sm text-muted-foreground">No block selected</p>
+          <p className="mt-1 text-xs text-muted-foreground/70">
+            Select a block to manage links
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <Link2 className="h-3.5 w-3.5" />
+          Implement Relations
+        </h3>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+          onClick={() => setIsAdding(!isAdding)}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      {/* Add link selector */}
+      {isAdding && (
+        <div className="space-y-2 rounded-md border border-border/50 bg-muted/20 p-3">
+          <p className="text-xs font-medium text-muted-foreground">
+            Select a block to link:
+          </p>
+          <div className="max-h-[200px] space-y-1 overflow-y-auto">
+            {availableBlocks.length === 0 ? (
+              <p className="py-2 text-xs text-muted-foreground/60">
+                No available blocks to link
+              </p>
+            ) : (
+              availableBlocks.map((b) => (
+                <button
+                  key={b.block_id}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted"
+                  onClick={() => handleLink(b.block_id)}
+                >
+                  <Badge
+                    variant="secondary"
+                    className="shrink-0 font-mono text-[9px] uppercase"
+                  >
+                    {b.block_type}
+                  </Badge>
+                  <span className="truncate">{b.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-full text-xs"
+            onClick={() => setIsAdding(false)}
+          >
+            Cancel
+          </Button>
+        </div>
+      )}
+
+      {/* Linked blocks list */}
+      {linkedBlocks.length === 0 && !isAdding ? (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border/50 py-8 text-center">
+          <Link2 className="mb-2 h-6 w-6 text-muted-foreground/30" />
+          <p className="text-sm text-muted-foreground">No linked blocks</p>
+          <p className="mt-1 text-xs text-muted-foreground/70">
+            Link blocks to create implement relations
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {linkedBlocks.map((linked) => (
+            <div
+              key={linked.block_id}
+              className="group flex items-center justify-between rounded-md border border-border/40 bg-muted/20 px-3 py-2 transition-colors hover:bg-muted/40"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <Badge
+                  variant="secondary"
+                  className="shrink-0 font-mono text-[9px] uppercase"
+                >
+                  {linked.block_type}
+                </Badge>
+                <span className="truncate text-sm text-foreground">
+                  {linked.name}
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+                onClick={() => handleUnlink(linked.block_id)}
+                title="Remove link"
+              >
+                <Unlink className="h-3 w-3" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const ActiveTerminalsList = ({ documentId }: { documentId: string }) => {
   const blocks = useAppStore((state) => {
     const fileState = state.files.get(documentId)
@@ -782,6 +958,12 @@ const ContextPanel = () => {
               Collaborators
             </TabsTrigger>
             <TabsTrigger
+              value="links"
+              className="rounded-none px-1 pb-3 text-sm text-muted-foreground data-[state=active]:border-b-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+            >
+              Links
+            </TabsTrigger>
+            <TabsTrigger
               value="timeline"
               className="rounded-none px-1 pb-3 text-sm text-muted-foreground data-[state=active]:border-b-2 data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
             >
@@ -798,6 +980,10 @@ const ContextPanel = () => {
 
             <TabsContent value="collaborators" className="mt-0">
               <CollaboratorsTab block={block} fileId={currentFileId} />
+            </TabsContent>
+
+            <TabsContent value="links" className="mt-0">
+              <LinksTab block={block} fileId={currentFileId} />
             </TabsContent>
 
             <TabsContent value="timeline" className="mt-0">

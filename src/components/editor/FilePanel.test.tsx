@@ -41,13 +41,22 @@ const mockStore = {
   getFileMetadata: vi.fn(() => ({ name: 'Test File' })),
   selectBlock: vi.fn(),
   createBlock: vi.fn(),
+  createTaskBlock: vi.fn(),
   renameBlock: vi.fn(),
   deleteBlock: vi.fn(),
   loadBlocks: vi.fn(),
   getOutlineTree: vi.fn(() => []),
   getOutlineRepos: vi.fn(() => []),
   getLinkedRepos: vi.fn(() => []),
+  getTaskBlocks: vi.fn(() => []),
+  getEvents: vi.fn(() => []),
   getActiveEditor: vi.fn(),
+  createEntry: vi.fn(),
+  renameEntry: vi.fn(),
+  renameEntryWithTypeChange: vi.fn(),
+  deleteEntry: vi.fn(),
+  importDirectory: vi.fn(),
+  checkoutWorkspace: vi.fn(),
 }
 
 vi.mock('@/lib/app-store', () => ({

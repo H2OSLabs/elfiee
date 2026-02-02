@@ -69,6 +69,7 @@ impl CapabilityRegistry {
         use crate::extensions::code::*;
         use crate::extensions::directory::*;
         use crate::extensions::markdown::*;
+        use crate::extensions::task::*;
         use crate::extensions::terminal::*;
 
         // Markdown extension
@@ -93,6 +94,11 @@ impl CapabilityRegistry {
         // Code extension
         self.register(Arc::new(CodeReadCapability));
         self.register(Arc::new(CodeWriteCapability));
+
+        // Task extension
+        self.register(Arc::new(TaskWriteCapability));
+        self.register(Arc::new(TaskReadCapability));
+        self.register(Arc::new(TaskCommitCapability));
 
         // Agent extension
         self.register(Arc::new(AgentCreateCapability));

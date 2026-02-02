@@ -3,6 +3,23 @@ use crate::models::{Block, BlockMetadata, Editor, EditorType, Event, RELATION_IM
 use log;
 use std::collections::HashMap;
 
+/// Remove `parent_id` from the parent list of each target block.
+/// Cleans up empty parent entries from the reverse index.
+fn remove_parent_entries(
+    parents: &mut HashMap<String, Vec<String>>,
+    parent_id: &str,
+    targets: &[String],
+) {
+    for target in targets {
+        if let Some(parent_list) = parents.get_mut(target) {
+            parent_list.retain(|id| id != parent_id);
+            if parent_list.is_empty() {
+                parents.remove(target);
+            }
+        }
+    }
+}
+
 /// In-memory state projection from events.
 ///
 /// Replays all events to build the current state of blocks, editors, and grants.
@@ -165,17 +182,13 @@ impl StateProjector {
                                         .push(event.entity.clone());
                                 }
                             }
-                            // Remove old parent entries
-                            for target in &old_targets {
-                                if !new_targets.contains(target) {
-                                    if let Some(parent_list) = self.parents.get_mut(target) {
-                                        parent_list.retain(|id| id != &event.entity);
-                                        if parent_list.is_empty() {
-                                            self.parents.remove(target);
-                                        }
-                                    }
-                                }
-                            }
+                            // Remove parent entries for targets no longer linked
+                            let removed: Vec<String> = old_targets
+                                .iter()
+                                .filter(|t| !new_targets.contains(t))
+                                .cloned()
+                                .collect();
+                            remove_parent_entries(&mut self.parents, &event.entity, &removed);
 
                             block.children = new_children;
                         }
@@ -217,16 +230,12 @@ impl StateProjector {
                                 .unwrap_or_default();
 
                             // Remove parent entries for targets that were unlinked
-                            for target in &old_targets {
-                                if !new_targets.contains(target) {
-                                    if let Some(parent_list) = self.parents.get_mut(target) {
-                                        parent_list.retain(|id| id != &event.entity);
-                                        if parent_list.is_empty() {
-                                            self.parents.remove(target);
-                                        }
-                                    }
-                                }
-                            }
+                            let removed: Vec<String> = old_targets
+                                .iter()
+                                .filter(|t| !new_targets.contains(t))
+                                .cloned()
+                                .collect();
+                            remove_parent_entries(&mut self.parents, &event.entity, &removed);
 
                             block.children = new_children;
                         }
@@ -236,21 +245,24 @@ impl StateProjector {
 
             // Block deletion
             "core.delete" => {
-                // Clean up reverse index: remove this block as a parent of its children
+                // 1. Clean up forward direction: remove this block as a parent of its children
                 if let Some(block) = self.blocks.get(&event.entity) {
                     if let Some(targets) = block.children.get(RELATION_IMPLEMENT) {
-                        for target in targets {
-                            if let Some(parent_list) = self.parents.get_mut(target) {
-                                parent_list.retain(|id| id != &event.entity);
-                                if parent_list.is_empty() {
-                                    self.parents.remove(target);
-                                }
+                        remove_parent_entries(&mut self.parents, &event.entity, targets);
+                    }
+                }
+
+                // 2. Clean up reverse direction: remove this block from parent blocks' children
+                if let Some(parent_ids) = self.parents.remove(&event.entity) {
+                    for parent_id in &parent_ids {
+                        if let Some(parent_block) = self.blocks.get_mut(parent_id) {
+                            if let Some(targets) = parent_block.children.get_mut(RELATION_IMPLEMENT)
+                            {
+                                targets.retain(|id| id != &event.entity);
                             }
                         }
                     }
                 }
-                // Also remove this block's own parents entry
-                self.parents.remove(&event.entity);
 
                 self.blocks.remove(&event.entity);
             }
@@ -1326,6 +1338,51 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_child_cleans_parent_children_map() {
+        let mut state = StateProjector::new();
+
+        state.apply_event(&create_block_event("a", "A", "alice", 1));
+        state.apply_event(&create_block_event("b", "B", "alice", 2));
+        state.apply_event(&create_block_event("c", "C", "alice", 3));
+
+        // A → B, A → C
+        let mut children = StdHashMap::new();
+        children.insert(
+            RELATION_IMPLEMENT.to_string(),
+            vec!["b".to_string(), "c".to_string()],
+        );
+        let link_ev = Event::new(
+            "a".to_string(),
+            "alice/core.link".to_string(),
+            serde_json::json!({ "children": children }),
+            {
+                let mut ts = StdHashMap::new();
+                ts.insert("alice".to_string(), 4);
+                ts
+            },
+        );
+        state.apply_event(&link_ev);
+        assert_eq!(state.get_children("a").len(), 2);
+
+        // Delete B — A's children should shrink to [C]
+        let delete_event = Event::new(
+            "b".to_string(),
+            "alice/core.delete".to_string(),
+            serde_json::json!({}),
+            {
+                let mut ts = StdHashMap::new();
+                ts.insert("alice".to_string(), 5);
+                ts
+            },
+        );
+        state.apply_event(&delete_event);
+
+        assert!(state.get_block("b").is_none());
+        assert_eq!(state.get_children("a"), vec!["c".to_string()]);
+        assert!(state.get_parents("b").is_empty());
+    }
+
+    #[test]
     fn test_get_children_convenience() {
         let mut state = StateProjector::new();
 
@@ -1355,5 +1412,42 @@ mod tests {
         assert_eq!(children.len(), 2);
         assert!(children.contains(&"b".to_string()));
         assert!(children.contains(&"c".to_string()));
+    }
+
+    // ========================================================================
+    // remove_parent_entries helper tests
+    // ========================================================================
+
+    #[test]
+    fn test_remove_parent_entries_basic() {
+        let mut parents: StdHashMap<String, Vec<String>> = StdHashMap::new();
+        parents.insert("child1".to_string(), vec!["parent1".to_string()]);
+        parents.insert(
+            "child2".to_string(),
+            vec!["parent1".to_string(), "parent2".to_string()],
+        );
+
+        remove_parent_entries(
+            &mut parents,
+            "parent1",
+            &["child1".to_string(), "child2".to_string()],
+        );
+
+        // child1 had only parent1, so entry should be removed entirely
+        assert!(!parents.contains_key("child1"));
+        // child2 still has parent2
+        assert_eq!(parents.get("child2").unwrap(), &vec!["parent2".to_string()]);
+    }
+
+    #[test]
+    fn test_remove_parent_entries_nonexistent_target() {
+        let mut parents: StdHashMap<String, Vec<String>> = StdHashMap::new();
+        parents.insert("child1".to_string(), vec!["parent1".to_string()]);
+
+        // Should not panic when target doesn't exist in map
+        remove_parent_entries(&mut parents, "parent1", &["nonexistent".to_string()]);
+
+        // Original entry unchanged
+        assert_eq!(parents.get("child1").unwrap(), &vec!["parent1".to_string()]);
     }
 }

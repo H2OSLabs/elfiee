@@ -760,6 +760,100 @@ export const commands = {
     }
   },
   /**
+   * Execute a task commit: validate → auto-discover repo → export snapshots → git commit.
+   *
+   * This command follows the Split Pattern:
+   * 1. Calls task.commit capability handler (authorization + audit event)
+   * 2. Auto-discovers linked repo from downstream blocks
+   * 3. Verifies discovered path has .git
+   * 4. Copies downstream block snapshots to repo path
+   * 5. Executes git branch + add + commit flow
+   *
+   * # Arguments
+   * * `file_id` - Elf file containing the task block
+   * * `task_block_id` - The task block to commit
+   * * `editor_id` - Optional editor ID (defaults to active editor)
+   */
+  async commitTask(
+    fileId: string,
+    taskBlockId: string,
+    editorId: string | null
+  ): Promise<Result<TaskCommitResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('commit_task', {
+          fileId,
+          taskBlockId,
+          editorId,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Inject git hooks into a linked repository (commit protect ON).
+   *
+   * Hooks are stored in the .elf temp dir, so they disappear on crash/close.
+   * Sets `core.hooksPath` to block direct commits and require task.commit workflow.
+   *
+   * # Arguments
+   * * `file_id` - Elf file ID (used to locate temp dir)
+   * * `repo_path` - External project git repo root
+   */
+  async injectHooksForRepo(
+    fileId: string,
+    repoPath: string
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('inject_hooks_for_repo', { fileId, repoPath }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Remove git hooks from a linked repository (commit protect OFF).
+   *
+   * Restores original `core.hooksPath` and cleans up Elfiee hook files.
+   */
+  async removeHooksForRepo(
+    fileId: string,
+    repoPath: string
+  ): Promise<Result<null, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('remove_hooks_for_repo', { fileId, repoPath }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Check if git hooks are currently injected for a repo.
+   */
+  async isHooksActive(
+    fileId: string,
+    repoPath: string
+  ): Promise<Result<boolean, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('is_hooks_active', { fileId, repoPath }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
    * Initialize and create a new PTY session.
    *
    * This command:
@@ -1436,6 +1530,50 @@ export type StateSnapshot = {
    * All grants in the system at that event
    */
   grants: Grant[]
+}
+/**
+ * Payload for task.commit capability
+ *
+ * Empty payload — target repo is auto-discovered from downstream blocks'
+ * `_block_dir` metadata, which links to external git repositories.
+ */
+export type TaskCommitPayload = Record<string, never>
+/**
+ * task.commit 操作的返回结果
+ */
+export type TaskCommitResult = {
+  /**
+   * Git commit hash
+   */
+  commit_hash: string
+  /**
+   * Git branch name
+   */
+  branch_name: string
+  /**
+   * 导出的文件列表
+   */
+  exported_files: string[]
+}
+/**
+ * Payload for task.read capability
+ *
+ * task.read is a permission-only capability, similar to markdown.read.
+ * No payload fields needed — the empty JSON object `{}` is accepted.
+ */
+export type TaskReadPayload = Record<string, never>
+/**
+ * Payload for task.write capability
+ *
+ * Contains markdown content for a task block.
+ * Stored in `contents` as `{ "markdown": "..." }` — same model as markdown blocks.
+ * Title is stored in `block.name`, description in `metadata.description`.
+ */
+export type TaskWritePayload = {
+  /**
+   * Markdown 内容
+   */
+  content: string
 }
 /**
  * Payload for terminal.execute capability

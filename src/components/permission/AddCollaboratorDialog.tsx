@@ -39,7 +39,16 @@ interface AddCollaboratorDialogProps {
 const getDefaultReadPermission = (blockType: string): string => {
   if (blockType === 'code') return 'code.read'
   if (blockType === 'directory') return 'directory.read'
+  if (blockType === 'task') return 'task.read'
   return 'markdown.read' // Default for markdown and other types
+}
+
+// Get default write permission based on block type
+const getDefaultWritePermission = (blockType: string): string => {
+  if (blockType === 'code') return 'code.write'
+  if (blockType === 'directory') return 'directory.write'
+  if (blockType === 'task') return 'task.write'
+  return 'markdown.write' // Default for markdown and other types
 }
 
 export const AddCollaboratorDialog = ({
@@ -115,6 +124,16 @@ export const AddCollaboratorDialog = ({
         granterId
       )
 
+      // Grant type-specific write permission
+      const defaultWritePermission = getDefaultWritePermission(blockType)
+      await grantCapability(
+        fileId,
+        selectedEditor.editor_id,
+        defaultWritePermission,
+        blockId,
+        granterId
+      )
+
       toast.success(`Added ${selectedEditor.name} to collaborators`)
       onSuccess?.(selectedEditor)
       handleOpenChange(false)
@@ -157,6 +176,16 @@ export const AddCollaboratorDialog = ({
         fileId,
         newEditor.editor_id,
         defaultPermission,
+        blockId,
+        granterId
+      )
+
+      // Grant type-specific write permission
+      const defaultWritePermission = getDefaultWritePermission(blockType)
+      await grantCapability(
+        fileId,
+        newEditor.editor_id,
+        defaultWritePermission,
         blockId,
         granterId
       )
