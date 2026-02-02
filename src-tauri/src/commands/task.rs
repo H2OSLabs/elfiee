@@ -8,6 +8,7 @@ use crate::models::Command;
 use crate::state::AppState;
 use crate::utils::git::{git_commit_flow, is_git_repo, sanitize_branch_name};
 use crate::utils::git_hooks::{inject_git_hooks, is_hooks_injected, remove_git_hooks};
+use crate::utils::path_validator::validate_virtual_path;
 use serde::{Deserialize, Serialize};
 use specta::specta;
 use specta::Type;
@@ -185,6 +186,9 @@ pub async fn commit_task(
         // Export downstream block contents to their original file paths
         let mut exported_files = Vec::new();
         for (block_id, entry_key) in block_entries {
+            // Security: validate entry_key before joining with repo_path
+            validate_virtual_path(entry_key)?;
+
             let block = all_blocks
                 .get(block_id)
                 .ok_or_else(|| format!("Downstream block {} not found", block_id))?;

@@ -8,7 +8,7 @@
 
 | 级别 | 问题数 | 处理方式 |
 |------|--------|---------|
-| CRITICAL | 2 | 1 个修复，1 个延后（UI 层） |
+| CRITICAL | 2 | 1 个修复（path traversal），1 个延后（hooks UI） |
 | HIGH | 3 | 全部修复 |
 | MEDIUM | 3 | 2 个修复，1 个不需要改 |
 | LOW | 4 | 2 个修复，2 个延后 |
@@ -106,12 +106,28 @@ fn remove_parent_entries(
 - `src-tauri/src/utils/git.rs` — 全部 inline comments、doc comments 和测试注释改为英文
 - `src-tauri/src/utils/git_hooks.rs` — 全部 inline comments、doc comments、测试注释，以及 `PRE_COMMIT_HOOK_CONTENT` shell 脚本中的注释改为英文
 
+### 6. Path traversal 校验（CRITICAL）
+
+**问题**: `commit_task` 中 `entry_key` 来自 directory block 的 entries map，如果包含 `../` 等路径遍历组件，`Path::new(repo_path).join(entry_key)` 可能写到 repo 外部。
+
+**文件**: `src-tauri/src/commands/task.rs`
+
+**修复**: 复用 `checkout.rs` 和 `directory_write.rs` 已有的 `validate_virtual_path()` 函数（来自 `utils/path_validator.rs`），在 `entry_key` 使用前校验：
+
+```rust
+use crate::utils::path_validator::validate_virtual_path;
+
+// In the export loop, before any file I/O:
+validate_virtual_path(entry_key)?;
+```
+
+`validate_virtual_path` 会拒绝：空路径、绝对路径（`/`）、路径遍历（`..`）、Windows 保留名、非法字符。与 `directory_write.rs` 对 entries key 的校验方式完全一致。
+
 ## 未修复的反馈项（及理由）
 
 | 反馈项 | 结论 | 理由 |
 |--------|------|------|
 | 静默 git hook 注入（CRITICAL） | 延后 | 这是 UI 层问题。添加确认弹窗会阻塞 claude code 等 agent 通过 MCP 自动提交。后续 UI 迭代处理 |
-| Path traversal 校验（CRITICAL） | 延后 | entry_key 来自 import 时的合法路径，MVP 阶段风险极低。后续安全加固时处理 |
 | `git status --porcelain` 检查位置 | 不改 | Reviewer 误判。`--porcelain` 在 `git add` 后执行，正确地同时检查暂存区和工作区状态 |
 | 前端错误处理（commit loading 状态） | 延后 | UI 层优化，不阻塞 merge |
 | `lib.rs:97` TODO 注释 | 延后 | 创建 issue 追踪即可 |
@@ -121,7 +137,7 @@ fn remove_parent_entries(
 
 | 文件 | 变更类型 | 说明 |
 |------|----------|------|
-| `src-tauri/src/commands/task.rs` | 修改 | 严格导出模式 + tokio::fs + 英文注释 |
+| `src-tauri/src/commands/task.rs` | 修改 | 严格导出模式 + tokio::fs + path traversal 校验 + 英文注释 |
 | `src-tauri/src/utils/git.rs` | 修改 | to_ascii_lowercase + 英文注释 + 新增 1 个测试 |
 | `src-tauri/src/utils/git_hooks.rs` | 修改 | 英文注释（含 shell 脚本） |
 | `src-tauri/src/engine/state.rs` | 修改 | 提取 remove_parent_entries + 新增 2 个测试 |
