@@ -47,7 +47,7 @@ Agent 模块将 Elfiee 的 Block 系统与外部 AI 编码工具（Phase 2 仅�
 | **前提条件** | 目标项目必须已有 `.claude/` 目录（已初始化 Claude Code） |
 | **Phase 2 限定** | 仅支持 Claude Code，通过标准 MCP 协议集成 |
 | **静态资源** | `.elf/Agents/elfiee-client/` 是所有 Agent Block 共享的内置工具目录 |
-| **系统级唯一** | 每个外部项目最多一个 Agent Block（同 target_project_id 不可重复） |
+| **Editor 级唯一** | 每个 (外部项目, bot editor) 对最多一个 Agent Block |
 
 ---
 
@@ -138,6 +138,12 @@ pub struct AgentContents {
 
     /// Agent 当前状态
     pub status: AgentStatus,
+
+    /// Bot editor_id associated with this agent.
+    /// Used by MCP server to attribute operations to the correct identity.
+    /// None for legacy agents (falls back to GUI active editor).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editor_id: Option<String>,
 }
 ```
 
@@ -168,6 +174,10 @@ pub struct AgentCreateV2Payload {
 
     /// 关联的外部项目 Dir Block ID（必须）
     pub target_project_id: String,
+
+    /// Bot editor_id to associate with this agent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editor_id: Option<String>,
 }
 
 /// agent.enable 的 Payload
@@ -197,6 +207,7 @@ pub struct AgentDisablePayload {
     "name": "elfiee",
     "target_project_id": "uuid-of-dir-block",
     "status": "enabled",
+    "editor_id": "bot-editor-uuid",
     "source": "outline"
   },
   "children": {},
@@ -309,7 +320,8 @@ agent.create(target_project_id, name?)
   │
   ├── 3. 验证 唯一性约束
   │     └── StateProjector 中不存在 block_type == "agent"
-  │         且 contents.target_project_id == target_project_id 的 Block
+  │         且 contents.target_project_id == target_project_id
+  │         且 contents.editor_id == payload.editor_id 的 Block
   │
   ├── 4. 验证 .claude/ 目录存在
   │     └── {external_path}/.claude/ 目录存在（已初始化 Claude Code）
@@ -745,8 +757,9 @@ pub fn resolve_template(
 
 | 场景 | 结果 |
 | :--- | :--- |
-| target_project_id 尚无 Agent | 创建成功 + 自动 enable |
-| target_project_id 已有 Agent | 返回错误 `"Agent already exists for this project"` |
+| (target_project_id, editor_id) 尚无 Agent | 创建成功 + 自动 enable |
+| (target_project_id, editor_id) 已有 Agent | 返回错误 `"Agent already exists for this editor on project"` |
+| 同一项目不同 editor_id | 各自独立创建成功 |
 
 ---
 
@@ -769,7 +782,7 @@ pub fn resolve_template(
 | 目标 Dir Block 不存在 | `"Target project block not found: {id}"` |
 | Dir Block 无 external_root_path | `"Target project has no external path"` |
 | `.claude/` 目录不存在 | `"Claude not initialized in target project: {path}. Run 'claude' first."` |
-| 重复创建 Agent | `"Agent already exists for project: {name} (block_id: {id})"` |
+| 重复创建 Agent | `"Agent already exists for this editor on project: {name} (block_id: {id})"` |
 | Symlink 创建失败 | `"Failed to create symlink: {io_error}"` |
 | MCP 配置写入失败 | `"Failed to write MCP config: {io_error}"` |
 | MCP 配置 JSON 损坏 | `"Invalid JSON in {path}: {parse_error}"` |
@@ -960,7 +973,7 @@ src-tauri/templates/elfiee-client/
 - [ ] `agent.disable(agent_block_id)` 清理 symlink 和 MCP 配置
 - [ ] 重复 enable 已启用的 Agent → 更新配置（幂等）
 - [ ] 重复 disable 已禁用的 Agent → 静默成功（幂等）
-- [ ] 同一项目不可创建两个 Agent Block（唯一性约束）
+- [ ] 同一 (项目, editor) 对不可创建两个 Agent Block（唯一性约束）
 - [ ] 目标项目无 `.claude/` 目录时报错并给出清晰提示
 
 ### 16.2 技术验收

@@ -174,6 +174,11 @@ pub struct AgentContents {
 
     /// Agent current status
     pub status: AgentStatus,
+
+    /// Bot editor_id associated with this agent.
+    /// Used by MCP server to attribute operations to the correct identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editor_id: Option<String>,
 }
 
 /// Agent enable/disable status
@@ -195,6 +200,10 @@ pub struct AgentCreateV2Payload {
 
     /// Associated external project Dir Block ID (required)
     pub target_project_id: String,
+
+    /// Bot editor_id to associate with this agent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editor_id: Option<String>,
 }
 
 /// Payload for agent.enable capability

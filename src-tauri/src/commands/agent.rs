@@ -245,14 +245,16 @@ pub async fn agent_create(
         ));
     }
 
-    // 5. Uniqueness check: no existing agent for this project
+    // 5. Uniqueness check: no duplicate agent for the same (project, editor) pair
     let all_blocks = handle.get_all_blocks().await;
     for block in all_blocks.values() {
         if block.block_type == "agent" {
             if let Ok(contents) = serde_json::from_value::<AgentContents>(block.contents.clone()) {
-                if contents.target_project_id == payload.target_project_id {
+                if contents.target_project_id == payload.target_project_id
+                    && contents.editor_id == payload.editor_id
+                {
                     return Err(format!(
-                        "Agent already exists for project: {} (block_id: {})",
+                        "Agent already exists for this editor on project: {} (block_id: {})",
                         block.name, block.block_id
                     ));
                 }

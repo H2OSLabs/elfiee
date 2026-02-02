@@ -3,6 +3,7 @@
 //! Uses rmcp's macro system for clean tool definitions.
 //! All tools call EngineManager directly, no intermediate layers.
 
+use crate::extensions::agent::{AgentContents, AgentStatus};
 use crate::mcp;
 use crate::models::Command;
 use crate::state::AppState;
@@ -312,6 +313,32 @@ impl ElfieeMcpServer {
             .ok_or_else(|| mcp::engine_not_found(file_id))
     }
 
+    /// Resolve the editor ID for MCP operations.
+    ///
+    /// Looks for an enabled agent block with an `editor_id` in the file.
+    /// Falls back to the GUI active editor if no agent identity is found.
+    async fn resolve_agent_editor_id(&self, file_id: &str) -> Result<String, McpError> {
+        let handle = self.get_engine(file_id)?;
+        let blocks = handle.get_all_blocks().await;
+
+        for block in blocks.values() {
+            if block.block_type == "agent" {
+                if let Ok(contents) =
+                    serde_json::from_value::<AgentContents>(block.contents.clone())
+                {
+                    if contents.status == AgentStatus::Enabled {
+                        if let Some(editor_id) = contents.editor_id {
+                            return Ok(editor_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: GUI active editor (for legacy agents without editor_id)
+        self.get_editor_id(file_id)
+    }
+
     /// Execute a capability and return rich result with updated state
     async fn execute_capability(
         &self,
@@ -321,7 +348,7 @@ impl ElfieeMcpServer {
         payload: serde_json::Value,
     ) -> Result<CallToolResult, McpError> {
         let file_id = self.get_file_id(project)?;
-        let editor_id = self.get_editor_id(&file_id)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
         let handle = self.get_engine(&file_id)?;
 
         let target_block_id = block_id.clone().unwrap_or_default();

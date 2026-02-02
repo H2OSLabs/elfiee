@@ -248,7 +248,8 @@ interface AppStore {
   createAgent: (
     fileId: string,
     targetProjectId: string,
-    name?: string
+    name?: string,
+    editorId?: string
   ) => Promise<AgentCreateResult>
   enableAgent: (
     fileId: string,
@@ -1399,12 +1400,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   createAgent: async (
     fileId: string,
     targetProjectId: string,
-    name?: string
+    name?: string,
+    editorId?: string
   ) => {
     try {
       const payload: AgentCreateV2Payload = {
         target_project_id: targetProjectId,
         name: name || null,
+        editor_id: editorId || null,
       }
       const result = await TauriClient.agent.createAgent(fileId, payload)
       // Reload blocks to reflect the new Agent Block

@@ -10,10 +10,13 @@ import {
   MoreVertical,
   Settings,
   UserMinus,
+  Loader2,
+  Sparkles,
 } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ConfigureBotDialog } from './ConfigureBotDialog'
-import type { Editor, Grant } from '@/bindings'
+import type { AgentContents, Block, Editor, Grant } from '@/bindings'
 
 interface CollaboratorItemProps {
   blockId: string
@@ -36,6 +39,12 @@ interface CollaboratorItemProps {
     granted: boolean
   ) => Promise<void>
   onRemoveAccess?: (editorId: string) => Promise<void>
+  agentBlock?: Block
+  onToggleAgentStatus?: (
+    agentBlockId: string,
+    currentStatus: string
+  ) => Promise<void>
+  onCreateAgent?: (editorId: string) => Promise<void>
 }
 
 // Permission mapping:
@@ -79,12 +88,21 @@ export const CollaboratorItem = ({
   isActive,
   onGrantChange,
   onRemoveAccess,
+  agentBlock,
+  onToggleAgentStatus,
+  onCreateAgent,
 }: CollaboratorItemProps) => {
   const [loadingCapabilities, setLoadingCapabilities] = useState<Set<string>>(
     new Set()
   )
   const [isRemoving, setIsRemoving] = useState(false)
   const [showConfigDialog, setShowConfigDialog] = useState(false)
+  const [isTogglingAgent, setIsTogglingAgent] = useState(false)
+
+  // Derive agent status from the associated agent block
+  const agentContents = agentBlock?.contents as AgentContents | undefined
+  const agentStatus = agentContents?.status
+  const isAgentEnabled = agentStatus === 'enabled'
 
   // Check if editor has a specific capability for this block
   const hasCapability = (capabilityId: string): boolean => {
@@ -133,6 +151,23 @@ export const CollaboratorItem = ({
       console.error('Failed to remove access:', error)
     } finally {
       setIsRemoving(false)
+    }
+  }
+
+  const handleToggleAgent = async () => {
+    setIsTogglingAgent(true)
+    try {
+      if (agentBlock && agentStatus && onToggleAgentStatus) {
+        // Agent exists → toggle enable/disable
+        await onToggleAgentStatus(agentBlock.block_id, agentStatus)
+      } else if (!agentBlock && onCreateAgent) {
+        // No agent yet → create one (auto-enabled)
+        await onCreateAgent(editor.editor_id)
+      }
+    } catch (error) {
+      console.error('Failed to toggle agent status:', error)
+    } finally {
+      setIsTogglingAgent(false)
     }
   }
 
@@ -219,6 +254,63 @@ export const CollaboratorItem = ({
           </DropdownMenu>
         )}
       </div>
+
+      {/* Agent Status Toggle - for all bot editors */}
+      {isBot && (
+        <div
+          className={`mb-3 ml-12 flex items-center justify-between rounded-md border px-3 py-2 transition-all ${
+            isAgentEnabled
+              ? 'border-green-200 bg-green-50/50 dark:border-green-900/50 dark:bg-green-900/20'
+              : 'border-border/50 bg-muted/20'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Sparkles
+              className={`h-3.5 w-3.5 ${
+                isAgentEnabled ? 'text-green-600' : 'text-muted-foreground'
+              }`}
+            />
+            <span
+              className={`text-xs font-medium ${
+                isAgentEnabled
+                  ? 'text-green-700 dark:text-green-400'
+                  : 'text-muted-foreground'
+              }`}
+            >
+              Agent Capabilities
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isTogglingAgent ? (
+              <div className="flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">
+                  Updating...
+                </span>
+              </div>
+            ) : (
+              <span
+                className={`text-[10px] font-medium transition-colors ${
+                  isAgentEnabled
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-muted-foreground'
+                }`}
+              >
+                {isAgentEnabled ? 'Active' : 'Inactive'}
+              </span>
+            )}
+
+            <Switch
+              checked={isAgentEnabled}
+              onCheckedChange={handleToggleAgent}
+              disabled={isTogglingAgent}
+              className="h-4 w-7 data-[state=checked]:bg-green-500"
+              data-testid={`agent-toggle-${editor.editor_id}`}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Bottom Row: Permissions */}
       <div className="flex flex-wrap items-center gap-3 pl-12">

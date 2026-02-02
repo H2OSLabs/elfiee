@@ -109,18 +109,48 @@ fn test_agent_contents_serialization() {
         name: "elfiee".to_string(),
         target_project_id: "proj-123".to_string(),
         status: AgentStatus::Enabled,
+        editor_id: Some("bot-123".to_string()),
     };
 
     let json = serde_json::to_value(&contents).unwrap();
     assert_eq!(json["name"], "elfiee");
     assert_eq!(json["target_project_id"], "proj-123");
     assert_eq!(json["status"], "enabled");
+    assert_eq!(json["editor_id"], "bot-123");
 
     // Roundtrip
     let deserialized: AgentContents = serde_json::from_value(json).unwrap();
     assert_eq!(deserialized.name, "elfiee");
     assert_eq!(deserialized.target_project_id, "proj-123");
     assert_eq!(deserialized.status, AgentStatus::Enabled);
+    assert_eq!(deserialized.editor_id, Some("bot-123".to_string()));
+}
+
+#[test]
+fn test_agent_contents_without_editor_id() {
+    // editor_id: None should be omitted from JSON (skip_serializing_if)
+    let contents = AgentContents {
+        name: "elfiee".to_string(),
+        target_project_id: "proj-123".to_string(),
+        status: AgentStatus::Enabled,
+        editor_id: None,
+    };
+
+    let json = serde_json::to_value(&contents).unwrap();
+    assert!(!json.as_object().unwrap().contains_key("editor_id"));
+}
+
+#[test]
+fn test_agent_contents_backward_compat_no_editor_id() {
+    // JSON without editor_id should deserialize to editor_id: None
+    let json = serde_json::json!({
+        "name": "elfiee",
+        "target_project_id": "proj-123",
+        "status": "enabled"
+    });
+
+    let contents: AgentContents = serde_json::from_value(json).unwrap();
+    assert_eq!(contents.editor_id, None);
 }
 
 #[test]
@@ -149,11 +179,13 @@ fn test_agent_create_v2_payload_with_name() {
     let payload = AgentCreateV2Payload {
         name: Some("my-agent".to_string()),
         target_project_id: "proj-123".to_string(),
+        editor_id: Some("bot-editor-1".to_string()),
     };
 
     let json = serde_json::to_value(&payload).unwrap();
     assert_eq!(json["name"], "my-agent");
     assert_eq!(json["target_project_id"], "proj-123");
+    assert_eq!(json["editor_id"], "bot-editor-1");
 }
 
 #[test]
@@ -161,10 +193,12 @@ fn test_agent_create_v2_payload_without_name() {
     let payload = AgentCreateV2Payload {
         name: None,
         target_project_id: "proj-123".to_string(),
+        editor_id: None,
     };
 
     let json = serde_json::to_value(&payload).unwrap();
     assert!(!json.as_object().unwrap().contains_key("name")); // skip_serializing_if
+    assert!(!json.as_object().unwrap().contains_key("editor_id")); // skip_serializing_if
     assert_eq!(json["target_project_id"], "proj-123");
 }
 

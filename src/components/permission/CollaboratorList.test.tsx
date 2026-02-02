@@ -226,4 +226,118 @@ describe('CollaboratorList Component', () => {
       })
     })
   })
+
+  describe('Agent Status Toggle', () => {
+    const mockBotEditor: Editor = {
+      editor_id: 'bot-789',
+      name: 'ElfieeBot',
+      editor_type: 'Bot',
+    }
+
+    const mockDirectoryBlock: Block = {
+      block_id: 'dir-block-1',
+      name: 'Project Dir',
+      block_type: 'directory',
+      owner: 'owner-123',
+      contents: {},
+      children: {},
+      metadata: {},
+    }
+
+    const mockAgentBlock: Block = {
+      block_id: 'agent-block-1',
+      name: 'ElfieeBot Agent',
+      block_type: 'agent',
+      owner: 'owner-123',
+      contents: {
+        name: 'ElfieeBot',
+        target_project_id: 'dir-block-1',
+        status: 'enabled',
+      },
+      children: {},
+      metadata: {},
+    }
+
+    it('should render agent toggle for bot editor with matching agent block', () => {
+      const store = useAppStore.getState()
+      store.files = new Map([
+        [
+          'file-1',
+          {
+            fileId: 'file-1',
+            metadata: null,
+            activeEditorId: 'owner-123',
+            editors: [mockOwnerEditor, mockBotEditor],
+            blocks: [mockDirectoryBlock, mockAgentBlock],
+            selectedBlockId: null,
+            events: [],
+            grants: [
+              {
+                editor_id: 'bot-789',
+                cap_id: 'directory.read',
+                block_id: 'dir-block-1',
+              },
+            ],
+          },
+        ],
+      ])
+      store.checkPermission = vi.fn().mockResolvedValue(true)
+      store.grantCapability = vi.fn()
+      store.revokeCapability = vi.fn()
+
+      render(
+        <CollaboratorList
+          fileId="file-1"
+          blockId="dir-block-1"
+          block={mockDirectoryBlock}
+        />
+      )
+
+      // The agent toggle should be rendered for the bot
+      expect(screen.getByTestId('agent-toggle-bot-789')).toBeInTheDocument()
+      expect(screen.getByText('Active')).toBeInTheDocument()
+    })
+
+    it('should render agent toggle OFF for bot editor without matching agent block', () => {
+      const store = useAppStore.getState()
+      store.files = new Map([
+        [
+          'file-1',
+          {
+            fileId: 'file-1',
+            metadata: null,
+            activeEditorId: 'owner-123',
+            editors: [mockOwnerEditor, mockBotEditor],
+            blocks: [mockDirectoryBlock], // No agent block
+            selectedBlockId: null,
+            events: [],
+            grants: [
+              {
+                editor_id: 'bot-789',
+                cap_id: 'directory.read',
+                block_id: 'dir-block-1',
+              },
+            ],
+          },
+        ],
+      ])
+      store.checkPermission = vi.fn().mockResolvedValue(true)
+      store.grantCapability = vi.fn()
+      store.revokeCapability = vi.fn()
+
+      render(
+        <CollaboratorList
+          fileId="file-1"
+          blockId="dir-block-1"
+          block={mockDirectoryBlock}
+        />
+      )
+
+      // Toggle should show for bot editors even without agent block
+      const toggle = screen.getByTestId('agent-toggle-bot-789')
+      expect(toggle).toBeInTheDocument()
+      // Should be in OFF state (no agent exists)
+      expect(screen.getByText('Inactive')).toBeInTheDocument()
+    })
+  })
 })

@@ -12,7 +12,30 @@ Elfiee exposes MCP tools and resources for interacting with `.elf` files. Two co
 | **GUI mode** | SSE on port 47200 | Elfiee GUI is running with files open |
 | **Standalone mode** | stdio (JSON-RPC) | No GUI needed; Claude Code launches `elfiee mcp-server --elf <path>` |
 
-**CRITICAL**: NEVER use filesystem commands (`cat`, `ls`, `rm`, etc.) on `.elf` contents. Always use MCP tools.
+## Prohibited Actions
+
+**When Elfiee MCP is connected, ALL content managed by .elf blocks MUST be read and written through Elfiee MCP tools.**
+
+### NEVER do these:
+
+| Prohibited | Use instead |
+|-----------|-------------|
+| `Read` / `cat` / `head` to read block content | `elfiee_markdown_read` / `elfiee_code_read` / `elfiee_block_get` |
+| `Write` / `Edit` to modify block content | `elfiee_markdown_write` / `elfiee_code_write` |
+| `Bash` with `ls` / `rm` / `mv` on .elf internals | `elfiee_block_list` / `elfiee_block_delete` / `elfiee_block_rename` |
+| `Glob` / `Grep` to search inside .elf | `elfiee_block_list` + `elfiee_*_read` |
+| Directly editing files that correspond to .elf blocks | Always go through `elfiee_*_write` tools |
+| Creating files in the project to store content | `elfiee_block_create` + `elfiee_*_write` |
+
+### Why this matters:
+
+- .elf uses **event sourcing** — direct filesystem edits bypass the event log and will be **lost or overwritten**
+- Permissions are enforced through **CBAC** (Capability-Based Access Control) — only MCP tools check authorization
+- Block snapshots (physical files) are **derived data** regenerated from events — editing them directly has no lasting effect
+
+### The only exception:
+
+- `elfiee_directory_export` explicitly exports block content to the filesystem for external use (e.g., git commit). Files created by export ARE normal filesystem files and can be read/edited normally after export.
 
 ## Standalone Mode
 
