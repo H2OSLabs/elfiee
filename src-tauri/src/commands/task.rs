@@ -15,14 +15,14 @@ use std::collections::HashMap;
 use std::path::Path;
 use tauri::State;
 
-/// task.commit 操作的返回结果
+/// Result of a task.commit operation.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct TaskCommitResult {
     /// Git commit hash
     pub commit_hash: String,
     /// Git branch name
     pub branch_name: String,
-    /// 导出的文件列表
+    /// List of exported file paths
     pub exported_files: Vec<String>,
 }
 
@@ -89,13 +89,13 @@ pub async fn commit_task(
     editor_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<TaskCommitResult, String> {
-    // 获取 engine handle
+    // Get engine handle
     let handle = state
         .engine_manager
         .get_engine(&file_id)
         .ok_or_else(|| format!("File '{}' is not open", file_id))?;
 
-    // 确定 editor_id
+    // Determine effective editor_id
     let effective_editor_id = if let Some(id) = editor_id {
         id
     } else {
@@ -106,7 +106,7 @@ pub async fn commit_task(
             .ok_or("No active editor set for this file")?
     };
 
-    // Step 1: 调用 task.commit capability（验证 + 审计事件，空 payload）
+    // Step 1: Execute task.commit capability (authorization + audit event)
     let cmd = Command::new(
         effective_editor_id.clone(),
         "task.commit".to_string(),
@@ -115,7 +115,7 @@ pub async fn commit_task(
     );
     let events = handle.process_command(cmd).await?;
 
-    // Step 2: 从 event 中获取 downstream_block_ids
+    // Step 2: Extract downstream_block_ids from the commit event
     let commit_event = events.first().ok_or("No commit event generated")?;
     let downstream_ids: Vec<String> = serde_json::from_value(
         commit_event
@@ -126,10 +126,10 @@ pub async fn commit_task(
     )
     .map_err(|e| format!("Failed to parse downstream_block_ids: {}", e))?;
 
-    // Step 3: 获取所有 blocks，自动发现 repo 路径
+    // Step 3: Get all blocks and auto-discover repo paths
     let all_blocks = handle.get_all_blocks().await;
 
-    // 按 repo_path 分组 downstream blocks，同时记录 entry_key（原始相对路径）
+    // Group downstream blocks by repo_path, recording entry_key (original relative path)
     let mut repo_blocks: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for block_id in &downstream_ids {
         if let Some((repo_path, entry_key)) = find_block_repo_path(&all_blocks, block_id) {
@@ -147,7 +147,7 @@ pub async fn commit_task(
         );
     }
 
-    // Step 4: 获取 task block 信息
+    // Step 4: Get task block info
     let task_block = handle
         .get_block(task_block_id.clone())
         .await
@@ -155,16 +155,16 @@ pub async fn commit_task(
     let task_name = &task_block.name;
     let task_description = task_block.metadata.description.as_deref().unwrap_or("");
 
-    // Step 5: 逐项目执行 export + git commit
+    // Step 5: Export files + git commit per repository
     let mut all_exported_files = Vec::new();
     let mut last_commit_hash = String::new();
     let mut last_branch_name = String::new();
 
-    // 获取 elf hooks dir（hooks 放在 elf temp dir，崩溃后自动消失）
+    // Get elf hooks dir (stored in elf temp dir, auto-cleaned on crash/close)
     let elf_hooks_dir = get_elf_hooks_dir(&file_id, &state)?;
 
     for (repo_path, block_entries) in &repo_blocks {
-        // 验证 repo_path 是 git repo
+        // Verify repo_path is a git repository
         if !is_git_repo(repo_path).await {
             return Err(format!(
                 "Project '{}' does not have a .git directory. Target must be a git repository.",
@@ -174,13 +174,15 @@ pub async fn commit_task(
 
         // Auto-inject hooks if not already present
         if !is_hooks_injected(repo_path, &elf_hooks_dir).await {
-            let _ = std::fs::create_dir_all(&elf_hooks_dir);
+            tokio::fs::create_dir_all(&elf_hooks_dir)
+                .await
+                .map_err(|e| format!("Failed to create hooks directory: {}", e))?;
             if let Err(e) = inject_git_hooks(repo_path, &elf_hooks_dir).await {
                 log::warn!("Failed to inject git hooks for {}: {}", repo_path, e);
             }
         }
 
-        // 导出下游 block 内容到原始文件路径（复用 checkout 的内容提取模式）
+        // Export downstream block contents to their original file paths
         let mut exported_files = Vec::new();
         for (block_id, entry_key) in block_entries {
             let block = all_blocks
@@ -196,21 +198,25 @@ pub async fn commit_task(
 
             let file_path = Path::new(repo_path).join(entry_key);
             if let Some(parent) = file_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    format!(
+                        "Failed to create parent directory for '{}': {}",
+                        entry_key, e
+                    )
+                })?;
             }
 
-            match std::fs::write(&file_path, content) {
-                Ok(_) => {
-                    exported_files.push(entry_key.clone());
-                    all_exported_files.push(entry_key.clone());
-                }
-                Err(e) => {
-                    log::warn!("Failed to export {} to {}: {}", block_id, entry_key, e);
-                }
-            }
+            tokio::fs::write(&file_path, content).await.map_err(|e| {
+                format!(
+                    "Failed to export block {} to '{}': {}",
+                    block_id, entry_key, e
+                )
+            })?;
+            exported_files.push(entry_key.clone());
+            all_exported_files.push(entry_key.clone());
         }
 
-        // Git 操作（只 add 导出的具体文件）
+        // Git operations (only add the specifically exported files)
         let branch_name = format!("feat/{}", sanitize_branch_name(task_name));
         let commit_hash =
             git_commit_flow(repo_path, &branch_name, task_description, &exported_files).await?;
@@ -251,7 +257,9 @@ pub async fn inject_hooks_for_repo(
         return Ok(());
     }
 
-    let _ = std::fs::create_dir_all(&elf_hooks_dir);
+    tokio::fs::create_dir_all(&elf_hooks_dir)
+        .await
+        .map_err(|e| format!("Failed to create hooks directory: {}", e))?;
     inject_git_hooks(&repo_path, &elf_hooks_dir).await
 }
 

@@ -12,40 +12,40 @@
 use super::git::git_exec;
 use std::path::Path;
 
-/// Pre-commit hook 脚本模板。
+/// Pre-commit hook script template.
 ///
-/// 链式调用原始 hook，然后检查 ELFIEE_TASK_COMMIT 环境变量。
-/// `pub` 供 `elf_meta::bootstrap_elf_meta` 创建 hook block 时使用。
+/// Chain-calls original hook, then checks ELFIEE_TASK_COMMIT environment variable.
+/// `pub` for use by `elf_meta::bootstrap_elf_meta` when creating the hook block.
 pub const PRE_COMMIT_HOOK_CONTENT: &str = r#"#!/bin/sh
 # Elfiee managed hook — chain to original, then check Elfiee workflow
 # Auto-removed when Elfiee closes
 # Bypass all hooks: git commit --no-verify
 
-# ── Step 1: 链式调用原始 hook ──
+# ── Step 1: Chain-call original hook ──
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ORIGINAL_HOOKS_DIR=""
 
-# 情况 A: 原项目设置了 core.hooksPath（如 husky → .husky/）
+# Case A: Project has custom core.hooksPath (e.g. husky → .husky/)
 if [ -f "$SCRIPT_DIR/../original-hooks-path" ]; then
     ORIGINAL_HOOKS_DIR=$(cat "$SCRIPT_DIR/../original-hooks-path")
-# 情况 B: 原项目用默认 .git/hooks/
+# Case B: Project uses default .git/hooks/
 elif [ -x ".git/hooks/pre-commit" ]; then
     ORIGINAL_HOOKS_DIR=".git/hooks"
 fi
 
-# 执行原始 hook（lint / format / test 等规则继续生效）
+# Execute original hook (lint / format / test rules still apply)
 if [ -n "$ORIGINAL_HOOKS_DIR" ] && [ -x "$ORIGINAL_HOOKS_DIR/pre-commit" ]; then
     "$ORIGINAL_HOOKS_DIR/pre-commit" "$@"
     RESULT=$?
     if [ $RESULT -ne 0 ]; then
-        exit $RESULT  # 原规则失败 → 直接拒绝，不到 Elfiee 检查
+        exit $RESULT  # Original hook failed → reject, skip Elfiee check
     fi
 fi
 
-# ── Step 2: Elfiee 工作流检查 ──
-# 检查是否由 task.commit 发起（环境变量标记）
+# ── Step 2: Elfiee workflow check ──
+# Check if commit was initiated by task.commit (env var marker)
 if [ "$ELFIEE_TASK_COMMIT" = "1" ]; then
-    exit 0  # task.commit 流程，放行
+    exit 0  # task.commit flow, allow
 fi
 
 echo "[Elfiee] Direct commit detected outside Elfiee workflow."
@@ -54,17 +54,17 @@ echo "[Elfiee] Bypass: git commit --no-verify"
 exit 1
 "#;
 
-/// 注入 git hooks（设置 core.hooksPath 指向 .elf/git/hooks/）
+/// Inject git hooks (set core.hooksPath to .elf/git/hooks/).
 ///
 /// # Arguments
-/// - `repo_path`: 外部项目 git repo 根目录
-/// - `elf_hooks_dir`: Elfiee 管理的 hooks 目录路径（如 `.elf/git/hooks/`）
+/// - `repo_path`: External project git repository root
+/// - `elf_hooks_dir`: Elfiee-managed hooks directory path (e.g. `.elf/git/hooks/`)
 pub async fn inject_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<(), String> {
-    // 确保 hooks 目录存在
+    // Ensure hooks directory exists
     std::fs::create_dir_all(elf_hooks_dir)
         .map_err(|e| format!("Failed to create hooks directory: {}", e))?;
 
-    // 检查是否有现存的 hooksPath 设置
+    // Check for existing hooksPath setting
     let existing = git_exec(
         repo_path,
         &["config", "--local", "--get", "core.hooksPath"],
@@ -75,7 +75,7 @@ pub async fn inject_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<()
     if let Ok(ref path) = existing {
         let path = path.trim();
         if !path.is_empty() && path != elf_hooks_dir {
-            // 保存原始路径到 .elf/git/original-hooks-path
+            // Save original path to .elf/git/original-hooks-path
             let original_path_file = Path::new(elf_hooks_dir)
                 .parent()
                 .unwrap_or(Path::new(elf_hooks_dir))
@@ -85,12 +85,12 @@ pub async fn inject_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<()
         }
     }
 
-    // 生成 pre-commit hook
+    // Write pre-commit hook
     let hook_path = Path::new(elf_hooks_dir).join("pre-commit");
     std::fs::write(&hook_path, PRE_COMMIT_HOOK_CONTENT)
         .map_err(|e| format!("Failed to write hook: {}", e))?;
 
-    // 设置可执行权限（Unix）
+    // Set executable permissions (Unix)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -98,7 +98,7 @@ pub async fn inject_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<()
             .map_err(|e| format!("Failed to set hook permissions: {}", e))?;
     }
 
-    // 设置 core.hooksPath
+    // Set core.hooksPath
     git_exec(
         repo_path,
         &["config", "--local", "core.hooksPath", elf_hooks_dir],
@@ -111,11 +111,11 @@ pub async fn inject_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<()
     Ok(())
 }
 
-/// 撤销 git hooks（恢复 core.hooksPath）
+/// Remove git hooks (restore core.hooksPath).
 ///
 /// # Arguments
-/// - `repo_path`: 外部项目 git repo 根目录
-/// - `elf_hooks_dir`: Elfiee 管理的 hooks 目录路径
+/// - `repo_path`: External project git repository root
+/// - `elf_hooks_dir`: Elfiee-managed hooks directory path
 pub async fn remove_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<(), String> {
     let original_path_file = Path::new(elf_hooks_dir)
         .parent()
@@ -123,7 +123,7 @@ pub async fn remove_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<()
         .join("original-hooks-path");
 
     if original_path_file.exists() {
-        // 恢复原始 hooksPath
+        // Restore original hooksPath
         let original = std::fs::read_to_string(&original_path_file)
             .map_err(|e| format!("Failed to read original hooks path: {}", e))?;
         git_exec(
@@ -134,7 +134,7 @@ pub async fn remove_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<()
         .await?;
         let _ = std::fs::remove_file(&original_path_file);
     } else {
-        // 移除设置（允许失败，可能已经被手动清理）
+        // Unset config (allow failure, may have been manually cleaned)
         let _ = git_exec(
             repo_path,
             &["config", "--local", "--unset", "core.hooksPath"],
@@ -143,7 +143,7 @@ pub async fn remove_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<()
         .await;
     }
 
-    // 清理 hook 文件
+    // Clean up hook files
     let hook_path = Path::new(elf_hooks_dir).join("pre-commit");
     let _ = std::fs::remove_file(&hook_path);
 
@@ -152,7 +152,7 @@ pub async fn remove_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<()
     Ok(())
 }
 
-/// 检查当前 core.hooksPath 是否指向 Elfiee 管理的目录
+/// Check if core.hooksPath currently points to the Elfiee-managed directory.
 pub async fn is_hooks_injected(repo_path: &str, elf_hooks_dir: &str) -> bool {
     match git_exec(
         repo_path,
@@ -182,7 +182,7 @@ mod tests {
             .await
             .unwrap();
 
-        // 初始 commit
+        // Initial commit
         std::fs::write(temp.path().join("README.md"), "# Test").unwrap();
         git_exec(repo_path, &["add", "."], &[]).await.unwrap();
         git_exec(repo_path, &["commit", "-m", "initial"], &[])
@@ -201,7 +201,7 @@ mod tests {
 
         inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
 
-        // 验证 core.hooksPath 已设置
+        // Verify core.hooksPath is set
         let hooks_path = git_exec(
             repo_path,
             &["config", "--local", "--get", "core.hooksPath"],
@@ -211,7 +211,7 @@ mod tests {
         .unwrap();
         assert_eq!(hooks_path.trim(), hooks_dir_str);
 
-        // 验证 pre-commit hook 存在且可执行
+        // Verify pre-commit hook exists and is executable
         let hook_path = hooks_dir.join("pre-commit");
         assert!(hook_path.exists());
 
@@ -230,15 +230,15 @@ mod tests {
         let hooks_dir = temp.path().join(".elf/git/hooks");
         let hooks_dir_str = hooks_dir.to_str().unwrap();
 
-        // 注入
+        // Inject
         inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
         assert!(is_hooks_injected(repo_path, hooks_dir_str).await);
 
-        // 撤销
+        // Remove
         remove_git_hooks(repo_path, hooks_dir_str).await.unwrap();
         assert!(!is_hooks_injected(repo_path, hooks_dir_str).await);
 
-        // Hook 文件已删除
+        // Hook files should be deleted
         assert!(!hooks_dir.join("pre-commit").exists());
     }
 
@@ -247,7 +247,7 @@ mod tests {
         let temp = setup_git_repo().await;
         let repo_path = temp.path().to_str().unwrap();
 
-        // 模拟原项目已有 hooksPath（如 husky）
+        // Simulate existing hooksPath (e.g. husky)
         git_exec(
             repo_path,
             &["config", "--local", "core.hooksPath", ".husky"],
@@ -259,16 +259,16 @@ mod tests {
         let hooks_dir = temp.path().join(".elf/git/hooks");
         let hooks_dir_str = hooks_dir.to_str().unwrap();
 
-        // 注入 Elfiee hooks
+        // Inject Elfiee hooks
         inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
 
-        // 验证原始路径被保存
+        // Verify original path was saved
         let original_path_file = temp.path().join(".elf/git/original-hooks-path");
         assert!(original_path_file.exists());
         let saved = std::fs::read_to_string(&original_path_file).unwrap();
         assert_eq!(saved.trim(), ".husky");
 
-        // 撤销后恢复原始路径
+        // After removal, original path should be restored
         remove_git_hooks(repo_path, hooks_dir_str).await.unwrap();
         let restored = git_exec(
             repo_path,
@@ -302,11 +302,11 @@ mod tests {
 
         inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
 
-        // 创建文件
+        // Create a file
         std::fs::write(temp.path().join("new.txt"), "content").unwrap();
         git_exec(repo_path, &["add", "."], &[]).await.unwrap();
 
-        // 直接 commit（不设置 ELFIEE_TASK_COMMIT）应该被拦截
+        // Direct commit (without ELFIEE_TASK_COMMIT) should be blocked
         let result = git_exec(repo_path, &["commit", "-m", "direct commit"], &[]).await;
         assert!(result.is_err(), "Direct commit should be blocked by hook");
     }
@@ -320,11 +320,11 @@ mod tests {
 
         inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
 
-        // 创建文件
+        // Create a file
         std::fs::write(temp.path().join("task.txt"), "task content").unwrap();
         git_exec(repo_path, &["add", "."], &[]).await.unwrap();
 
-        // 设置 ELFIEE_TASK_COMMIT=1 → 应该放行
+        // With ELFIEE_TASK_COMMIT=1 → should be allowed
         let result = git_exec(
             repo_path,
             &["commit", "-m", "task commit"],
@@ -350,7 +350,7 @@ mod tests {
         std::fs::write(temp.path().join("bypass.txt"), "bypass").unwrap();
         git_exec(repo_path, &["add", "."], &[]).await.unwrap();
 
-        // --no-verify 应该绕过所有 hooks
+        // --no-verify should bypass all hooks
         let result = git_exec(
             repo_path,
             &["commit", "--no-verify", "-m", "bypass commit"],

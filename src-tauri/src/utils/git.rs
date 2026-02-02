@@ -7,12 +7,12 @@
 /// - Branch name sanitization
 use std::path::Path;
 
-/// 执行 git 命令（支持环境变量注入）
+/// Execute a git command with optional environment variable injection.
 ///
 /// # Arguments
-/// - `repo_path`: git repo 根目录
-/// - `args`: git 子命令及参数
-/// - `env`: 额外注入的环境变量
+/// - `repo_path`: Git repository root directory
+/// - `args`: Git subcommand and arguments
+/// - `env`: Additional environment variables to inject
 pub async fn git_exec(
     repo_path: &str,
     args: &[&str],
@@ -36,20 +36,20 @@ pub async fn git_exec(
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// 检查路径是否是 git 仓库
+/// Check if a path is a git repository.
 pub async fn is_git_repo(repo_path: &str) -> bool {
     Path::new(repo_path).join(".git").exists()
 }
 
-/// 创建或切换分支 → add → commit 的完整流程
+/// Full workflow: create/switch branch → add → commit.
 ///
-/// 设置 `ELFIEE_TASK_COMMIT=1` 环境变量让 Elfiee 管理的 git hook 放行。
+/// Sets `ELFIEE_TASK_COMMIT=1` environment variable to bypass Elfiee-managed git hooks.
 ///
 /// # Arguments
-/// - `repo_path`: git repo 根目录
-/// - `branch_name`: 目标分支名（如 `feat/fix-login`）
-/// - `message`: commit message
-/// - `files`: 要 add 的文件列表（如为空则 `git add -A`）
+/// - `repo_path`: Git repository root directory
+/// - `branch_name`: Target branch name (e.g. `feat/fix-login`)
+/// - `message`: Commit message
+/// - `files`: Files to add (if empty, uses `git add -A`)
 ///
 /// # Returns
 /// commit hash string
@@ -59,7 +59,7 @@ pub async fn git_commit_flow(
     message: &str,
     files: &[String],
 ) -> Result<String, String> {
-    // 检查分支是否已存在
+    // Check if branch already exists
     let branch_list = git_exec(repo_path, &["branch", "--list", branch_name], &[]).await?;
     if branch_list.trim().is_empty() {
         git_exec(repo_path, &["checkout", "-b", branch_name], &[]).await?;
@@ -77,13 +77,13 @@ pub async fn git_commit_flow(
         git_exec(repo_path, &add_args, &[("ELFIEE_TASK_COMMIT", "1")]).await?;
     }
 
-    // 检查是否有变更需要 commit
+    // Check if there are changes to commit
     let status = git_exec(repo_path, &["status", "--porcelain"], &[]).await?;
     if status.trim().is_empty() {
         return Err("No changes to commit".to_string());
     }
 
-    // git commit（设置 ELFIEE_TASK_COMMIT=1 让 hook 放行）
+    // git commit (ELFIEE_TASK_COMMIT=1 bypasses Elfiee hooks)
     git_exec(
         repo_path,
         &["commit", "-m", message],
@@ -91,18 +91,18 @@ pub async fn git_commit_flow(
     )
     .await?;
 
-    // 获取 commit hash
+    // Get commit hash
     let hash = git_exec(repo_path, &["rev-parse", "HEAD"], &[]).await?;
     Ok(hash.trim().to_string())
 }
 
-/// 清洗分支名（去掉非法字符）
+/// Sanitize a branch name by removing illegal characters.
 ///
-/// Git 分支名规则：
-/// - 不能包含空格、~、^、:、?、*、[、\
-/// - 不能以 . 开头或结尾
-/// - 不能包含连续的 ..
-/// - 转为小写
+/// Git branch name rules:
+/// - Cannot contain spaces, ~, ^, :, ?, *, [, \
+/// - Cannot start or end with .
+/// - Cannot contain consecutive ..
+/// - ASCII characters converted to lowercase (non-ASCII preserved as-is)
 pub fn sanitize_branch_name(name: &str) -> String {
     let sanitized: String = name
         .chars()
@@ -115,7 +115,7 @@ pub fn sanitize_branch_name(name: &str) -> String {
         })
         .collect();
 
-    // 去掉首尾的 - 和 .，合并连续的 -
+    // Remove leading/trailing dashes and collapse consecutive dashes
     let mut result = String::new();
     let mut prev_dash = false;
     for c in sanitized.chars() {
@@ -130,7 +130,7 @@ pub fn sanitize_branch_name(name: &str) -> String {
         }
     }
 
-    result.trim_end_matches('-').to_lowercase()
+    result.trim_end_matches('-').to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_sanitize_branch_name_chinese() {
-        // 中文字符是 Unicode alphanumeric，保留并转小写
+        // CJK characters are Unicode alphanumeric, preserved as-is (no case conversion)
         assert_eq!(sanitize_branch_name("实现登录功能"), "实现登录功能");
     }
 
@@ -178,7 +178,13 @@ mod tests {
         assert_eq!(sanitize_branch_name(""), "");
     }
 
-    // 异步测试需要 git repo，放在集成测试中
+    #[test]
+    fn test_sanitize_branch_name_mixed_ascii_unicode() {
+        // ASCII letters are lowercased, non-ASCII Unicode preserved as-is
+        assert_eq!(sanitize_branch_name("Fix-登录-Bug"), "fix-登录-bug");
+    }
+
+    // Async tests require a git repo, placed in integration tests
     #[tokio::test]
     async fn test_is_git_repo_nonexistent() {
         assert!(!is_git_repo("/nonexistent/path").await);
@@ -189,7 +195,7 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let repo_path = temp.path().to_str().unwrap();
 
-        // 初始化 git repo
+        // Initialize git repo
         git_exec(repo_path, &["init"], &[]).await.unwrap();
         git_exec(repo_path, &["config", "user.email", "test@test.com"], &[])
             .await
@@ -198,17 +204,17 @@ mod tests {
             .await
             .unwrap();
 
-        // 创建一个文件
+        // Create a file
         std::fs::write(temp.path().join("test.txt"), "hello").unwrap();
         git_exec(repo_path, &["add", "."], &[]).await.unwrap();
         git_exec(repo_path, &["commit", "-m", "initial"], &[])
             .await
             .unwrap();
 
-        // 创建另一个文件准备 commit
+        // Create another file for commit
         std::fs::write(temp.path().join("feature.txt"), "new feature").unwrap();
 
-        // 使用 git_commit_flow
+        // Use git_commit_flow
         let hash = git_commit_flow(repo_path, "feat/test-feature", "Add test feature", &[])
             .await
             .unwrap();
@@ -216,11 +222,11 @@ mod tests {
         assert!(!hash.is_empty(), "Should return a commit hash");
         assert_eq!(hash.len(), 40, "SHA-1 hash should be 40 chars");
 
-        // 验证分支存在
+        // Verify branch exists
         let branches = git_exec(repo_path, &["branch"], &[]).await.unwrap();
         assert!(branches.contains("feat/test-feature"));
 
-        // 验证 commit message
+        // Verify commit message
         let log = git_exec(repo_path, &["log", "--oneline", "-1"], &[])
             .await
             .unwrap();
@@ -232,7 +238,7 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         let repo_path = temp.path().to_str().unwrap();
 
-        // 初始化
+        // Initialize
         git_exec(repo_path, &["init"], &[]).await.unwrap();
         git_exec(repo_path, &["config", "user.email", "test@test.com"], &[])
             .await
@@ -247,13 +253,13 @@ mod tests {
             .await
             .unwrap();
 
-        // 第一次 commit
+        // First commit
         std::fs::write(temp.path().join("f1.txt"), "first").unwrap();
         git_commit_flow(repo_path, "feat/test", "First commit", &[])
             .await
             .unwrap();
 
-        // 切回 main/master
+        // Switch back to main/master
         let checkout_result = git_exec(repo_path, &["checkout", "master"], &[]).await;
         if checkout_result.is_err() {
             git_exec(repo_path, &["checkout", "main"], &[])
@@ -261,14 +267,14 @@ mod tests {
                 .unwrap();
         }
 
-        // 第二次 commit 到同一分支
+        // Second commit on main
         std::fs::write(temp.path().join("f2.txt"), "second").unwrap();
         git_exec(repo_path, &["add", "."], &[]).await.unwrap();
         git_exec(repo_path, &["commit", "-m", "on main"], &[])
             .await
             .unwrap();
 
-        // 切到已有分支再 commit
+        // Switch to existing branch and commit again
         std::fs::write(temp.path().join("f3.txt"), "third").unwrap();
         let hash = git_commit_flow(repo_path, "feat/test", "Second commit on feat", &[])
             .await
@@ -296,7 +302,7 @@ mod tests {
             .await
             .unwrap();
 
-        // 没有新变更，应该报错
+        // No new changes, should return error
         let result = git_commit_flow(repo_path, "feat/empty", "No changes", &[]).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("No changes to commit"));
