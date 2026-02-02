@@ -77,6 +77,11 @@ pub fn run() {
                 commands::editor::get_block_grants,
                 // Workspace/Checkout operations
                 commands::checkout::checkout_workspace,
+                // Task operations (Split Pattern: I/O side)
+                commands::task::commit_task,
+                commands::task::inject_hooks_for_repo,
+                commands::task::remove_hooks_for_repo,
+                commands::task::is_hooks_active,
                 // Terminal operations (from extensions/terminal/commands.rs)
                 // Note: These are high-frequency "patch" operations that don't record Events.
                 // Event-producing operations use capabilities via execute_command.
@@ -91,6 +96,10 @@ pub fn run() {
             // NOTE: When adding a new extension with payload types, register them here.
             // TODO: Consider automating this with a macro if extensions grow beyond ~10
             // Core payload types (used by builtin capabilities)
+            .typ::<extensions::task::TaskCommitPayload>()
+            .typ::<extensions::task::TaskReadPayload>()
+            .typ::<extensions::task::TaskWritePayload>()
+            .typ::<commands::task::TaskCommitResult>()
             .typ::<extensions::code::CodeWritePayload>()
             .typ::<extensions::code::CodeReadPayload>()
             .typ::<extensions::directory::DirectoryRenamePayload>()
@@ -170,6 +179,11 @@ pub fn run() {
         commands::editor::get_block_grants,
         // Workspace/Checkout operations
         commands::checkout::checkout_workspace,
+        // Task operations (Split Pattern: I/O side)
+        commands::task::commit_task,
+        commands::task::inject_hooks_for_repo,
+        commands::task::remove_hooks_for_repo,
+        commands::task::is_hooks_active,
         // Terminal operations (from extensions/terminal/commands.rs)
         extensions::terminal::commands::init_pty_session,
         extensions::terminal::commands::write_to_pty,

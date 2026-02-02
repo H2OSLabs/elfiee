@@ -19,6 +19,7 @@ use std::path::Path;
 fn snapshot_filename(block_type: &str, block_name: &str) -> String {
     match block_type {
         "markdown" => "body.md".to_string(),
+        "task" => "body.md".to_string(),
         "directory" => "body.json".to_string(),
         "code" => {
             if let Some(ext) = Path::new(block_name).extension().and_then(|e| e.to_str()) {
@@ -34,11 +35,12 @@ fn snapshot_filename(block_type: &str, block_name: &str) -> String {
 /// Extract text content from block contents based on block type.
 ///
 /// - markdown → `contents.markdown`
+/// - task → `contents.markdown` (same model as markdown blocks)
 /// - code → `contents.text`
 /// - directory → JSON-serialized `contents.entries`
 fn extract_content(block_type: &str, contents: &serde_json::Value) -> Option<String> {
     match block_type {
-        "markdown" => contents
+        "markdown" | "task" => contents
             .get("markdown")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),

@@ -8,12 +8,12 @@
 
 ```
 .elf/                              # 唯一系统级 Dir Block (flat namespace)
-├── Agents/
-│   ├── elfiee-client/
-│   │   ├── scripts/               # 预留：自定义脚本
-│   │   ├── assets/                # 预留：静态资源
-│   │   └── references/            # 预留：参考文档
-│   └── session/                   # 预留：Session JSONL 存储
+├── agents/
+│   └── elfiee-client/
+│       ├── scripts/               # 预留：自定义脚本
+│       ├── assets/                # 预留：静态资源
+│       └── references/            # 预留：参考文档
+├── session/                       # 预留：Session JSONL 存储
 └── git/                           # 预留：Git hooks 模板
 ```
 
@@ -112,27 +112,27 @@ create_file(path)
   "value": {
     "contents": {
       "entries": {
-        "Agents/": {
+        "agents/": {
           "id": "dir-{uuid}", "type": "directory",
           "source": "outline", "updated_at": "..."
         },
-        "Agents/elfiee-client/": {
+        "agents/elfiee-client/": {
           "id": "dir-{uuid}", "type": "directory",
           "source": "outline", "updated_at": "..."
         },
-        "Agents/elfiee-client/scripts/": {
+        "agents/elfiee-client/scripts/": {
           "id": "dir-{uuid}", "type": "directory",
           "source": "outline", "updated_at": "..."
         },
-        "Agents/elfiee-client/assets/": {
+        "agents/elfiee-client/assets/": {
           "id": "dir-{uuid}", "type": "directory",
           "source": "outline", "updated_at": "..."
         },
-        "Agents/elfiee-client/references/": {
+        "agents/elfiee-client/references/": {
           "id": "dir-{uuid}", "type": "directory",
           "source": "outline", "updated_at": "..."
         },
-        "Agents/session/": {
+        "session/": {
           "id": "dir-{uuid}", "type": "directory",
           "source": "outline", "updated_at": "..."
         },

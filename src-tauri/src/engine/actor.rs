@@ -163,7 +163,7 @@ impl ElfileEngineActor {
             let cap_id = Self::extract_cap_id(&event.attribute);
 
             match cap_id {
-                "markdown.write" | "code.write" => {
+                "markdown.write" | "code.write" | "task.write" => {
                     // Content write: get block from state and write snapshot
                     if let Some(block) = self.state.get_block(&event.entity) {
                         if let Err(e) = write_block_snapshot(

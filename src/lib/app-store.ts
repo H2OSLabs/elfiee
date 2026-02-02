@@ -169,6 +169,32 @@ interface AppStore {
     targetBlock?: string
   ) => Promise<void>
 
+  // Link operations
+  linkBlock: (
+    fileId: string,
+    sourceBlockId: string,
+    targetBlockId: string,
+    relation?: string
+  ) => Promise<void>
+  unlinkBlock: (
+    fileId: string,
+    sourceBlockId: string,
+    targetBlockId: string,
+    relation?: string
+  ) => Promise<void>
+
+  // Task operations
+  getTaskBlocks: (fileId: string) => Block[]
+  createTaskBlock: (fileId: string, name: string) => Promise<void>
+  commitTask: (
+    fileId: string,
+    taskBlockId: string
+  ) => Promise<{
+    commit_hash: string
+    branch_name: string
+    exported_files: string[]
+  }>
+
   // Terminal operations
   createTerminalBlock: (
     fileId: string,
@@ -771,6 +797,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       )
       await get().loadBlocks(fileId)
       toast.success('Directory imported successfully')
+
+      // Auto-inject git hooks for linked repos with .git (commit protect ON)
+      // Hooks are stored in .elf temp dir — disappear on crash/close
+      try {
+        await TauriClient.task.injectHooksForRepo(fileId, sourcePath)
+        toast.info('Commit protect enabled for tracked commits')
+      } catch {
+        // Not a git repo or injection failed — silently ignore
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error)
@@ -1079,6 +1114,111 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const errorMessage =
         error instanceof Error ? error.message : String(error)
       toast.error(`Failed to revoke permission: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  // Link operations
+  linkBlock: async (
+    fileId: string,
+    sourceBlockId: string,
+    targetBlockId: string,
+    relation: string = 'implement'
+  ) => {
+    try {
+      const activeEditorId =
+        get().files.get(fileId)?.activeEditorId || undefined
+      const editorId =
+        activeEditorId || (await TauriClient.file.getSystemEditorId())
+
+      const cmd = {
+        cmd_id: crypto.randomUUID(),
+        editor_id: editorId,
+        cap_id: 'core.link',
+        block_id: sourceBlockId,
+        payload: {
+          relation,
+          target_id: targetBlockId,
+        } as unknown as import('@/bindings').JsonValue,
+        timestamp: new Date().toISOString(),
+      }
+      await TauriClient.block.executeCommand(fileId, cmd)
+      await get().loadBlocks(fileId)
+      toast.success('Block linked')
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to link block: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  unlinkBlock: async (
+    fileId: string,
+    sourceBlockId: string,
+    targetBlockId: string,
+    relation: string = 'implement'
+  ) => {
+    try {
+      const activeEditorId =
+        get().files.get(fileId)?.activeEditorId || undefined
+      const editorId =
+        activeEditorId || (await TauriClient.file.getSystemEditorId())
+
+      const cmd = {
+        cmd_id: crypto.randomUUID(),
+        editor_id: editorId,
+        cap_id: 'core.unlink',
+        block_id: sourceBlockId,
+        payload: {
+          relation,
+          target_id: targetBlockId,
+        } as unknown as import('@/bindings').JsonValue,
+        timestamp: new Date().toISOString(),
+      }
+      await TauriClient.block.executeCommand(fileId, cmd)
+      await get().loadBlocks(fileId)
+      toast.success('Block unlinked')
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to unlink block: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  // Task operations
+  getTaskBlocks: (fileId: string) => {
+    const fileState = get().files.get(fileId)
+    return (fileState?.blocks || []).filter((b) => b.block_type === 'task')
+  },
+
+  createTaskBlock: async (fileId: string, name: string) => {
+    try {
+      await TauriClient.block.createBlock(fileId, name, 'task')
+      await get().loadBlocks(fileId)
+      toast.success('Task created successfully')
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to create task: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  commitTask: async (fileId: string, taskBlockId: string) => {
+    try {
+      const result = await TauriClient.task.commitTask(fileId, taskBlockId)
+      await get().loadBlocks(fileId)
+      await get().loadEvents(fileId)
+      toast.success(
+        `Task committed to branch ${result.branch_name} (${result.commit_hash.slice(0, 7)})`
+      )
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to commit task: ${errorMessage}`)
       throw error
     }
   },

@@ -17,6 +17,7 @@ import {
   type GrantPayload,
   type RevokePayload,
   type FileMetadata,
+  type TaskCommitResult,
 } from '@/bindings'
 import { sortEventsByVectorClock } from '@/utils/event-utils'
 
@@ -271,9 +272,14 @@ export class BlockOperations {
       (await EditorOperations.getActiveEditor(fileId)) ||
       (await getSystemEditorId())
 
-    const capId = blockType === 'code' ? 'code.write' : 'markdown.write'
-
-    // Both payloads have a 'content' field
+    // Task blocks use task.write with {content} (same model as markdown);
+    // markdown/code also use {content}
+    const capId =
+      blockType === 'code'
+        ? 'code.write'
+        : blockType === 'task'
+          ? 'task.write'
+          : 'markdown.write'
     const payload = { content }
 
     const cmd = createCommand(
@@ -1050,6 +1056,86 @@ export class TerminalOperations {
 }
 
 /**
+ * Task Operations
+ *
+ * Task blocks use capability-based operations for write/read,
+ * and a dedicated Tauri command for commit (Split Pattern: I/O side).
+ */
+export class TaskOperations {
+  /**
+   * Commit a task via the dedicated Tauri command (Split Pattern: I/O side)
+   *
+   * This triggers: capability check → auto-discover repo → snapshot export → git commit
+   * Target repo is auto-discovered from downstream blocks' linked directory metadata.
+   *
+   * @param fileId - Elf file containing the task block
+   * @param taskBlockId - The task block to commit
+   * @param editorId - Optional editor ID (defaults to active editor)
+   */
+  static async commitTask(
+    fileId: string,
+    taskBlockId: string,
+    editorId?: string
+  ): Promise<TaskCommitResult> {
+    const result = await commands.commitTask(
+      fileId,
+      taskBlockId,
+      editorId || null
+    )
+    if (result.status === 'ok') {
+      return result.data
+    } else {
+      throw new Error(result.error)
+    }
+  }
+
+  /**
+   * Inject Elfiee git hooks into a linked repository (commit protect ON).
+   *
+   * Hooks are stored in the .elf temp dir, so they disappear on crash/close.
+   * Sets core.hooksPath to block direct commits and require task.commit workflow.
+   */
+  static async injectHooksForRepo(
+    fileId: string,
+    repoPath: string
+  ): Promise<void> {
+    const result = await commands.injectHooksForRepo(fileId, repoPath)
+    if (result.status === 'error') {
+      throw new Error(result.error)
+    }
+  }
+
+  /**
+   * Remove Elfiee git hooks from a linked repository (commit protect OFF).
+   *
+   * Restores original core.hooksPath and cleans up hook files.
+   */
+  static async removeHooksForRepo(
+    fileId: string,
+    repoPath: string
+  ): Promise<void> {
+    const result = await commands.removeHooksForRepo(fileId, repoPath)
+    if (result.status === 'error') {
+      throw new Error(result.error)
+    }
+  }
+
+  /**
+   * Check if git hooks are currently injected for a repo.
+   */
+  static async isHooksActive(
+    fileId: string,
+    repoPath: string
+  ): Promise<boolean> {
+    const result = await commands.isHooksActive(fileId, repoPath)
+    if (result.status === 'ok') {
+      return result.data
+    }
+    throw new Error(result.error)
+  }
+}
+
+/**
  * Main Tauri Client export
  */
 export const TauriClient = {
@@ -1059,4 +1145,5 @@ export const TauriClient = {
   directory: DirectoryOperations,
   event: EventOperations,
   terminal: TerminalOperations,
+  task: TaskOperations,
 }

@@ -1,5 +1,16 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
-import { Save, Play, Loader2, Terminal, Edit2, Check, X } from 'lucide-react'
+import {
+  Save,
+  Play,
+  Loader2,
+  Terminal,
+  Edit2,
+  Check,
+  X,
+  GitCommitHorizontal,
+  ShieldCheck,
+  ShieldOff,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -14,6 +25,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { TauriClient } from '@/lib/tauri-client'
 import { CodeBlockEditor } from './CodeBlockEditor'
 import { TerminalPanel } from './TerminalPanel'
 import './myst-styles.css'
@@ -832,6 +844,113 @@ print('Hello, World!')
   )
 }
 
+// Task Toolbar: commit action + commit protect toggle for task blocks
+const TaskToolbar = ({ blockId }: { blockId: string }) => {
+  const { currentFileId, commitTask, saveFile, getBlocks } = useAppStore()
+  const [isCommitting, setIsCommitting] = useState(false)
+  const [commitProtect, setCommitProtect] = useState(false)
+  const [isToggling, setIsToggling] = useState(false)
+
+  // Get linked repo paths from directory blocks with source=linked
+  const linkedRepoPaths = useMemo(() => {
+    if (!currentFileId) return []
+    const blocks = getBlocks(currentFileId)
+    return blocks
+      .filter(
+        (b) =>
+          b.block_type === 'directory' &&
+          (b.contents as Record<string, unknown>)?.source === 'linked'
+      )
+      .map(
+        (b) =>
+          (b.metadata as Record<string, unknown>)?.external_root_path as string
+      )
+      .filter(Boolean)
+  }, [currentFileId, getBlocks])
+
+  // Check initial hooks status on mount
+  useEffect(() => {
+    if (!currentFileId || linkedRepoPaths.length === 0) return
+    TauriClient.task
+      .isHooksActive(currentFileId, linkedRepoPaths[0])
+      .then(setCommitProtect)
+      .catch(() => setCommitProtect(false))
+  }, [currentFileId, linkedRepoPaths])
+
+  const handleCommit = useCallback(async () => {
+    if (!currentFileId) return
+
+    setIsCommitting(true)
+    try {
+      const result = await commitTask(currentFileId, blockId)
+      await saveFile(currentFileId)
+      toast.success(
+        `Committed to ${result.branch_name} (${result.commit_hash.slice(0, 7)})`
+      )
+    } catch {
+      // Error toast shown by store
+    } finally {
+      setIsCommitting(false)
+    }
+  }, [currentFileId, blockId, commitTask, saveFile])
+
+  const handleToggleProtect = useCallback(async () => {
+    if (!currentFileId || linkedRepoPaths.length === 0) return
+
+    setIsToggling(true)
+    try {
+      for (const repoPath of linkedRepoPaths) {
+        if (commitProtect) {
+          await TauriClient.task.removeHooksForRepo(currentFileId, repoPath)
+        } else {
+          await TauriClient.task.injectHooksForRepo(currentFileId, repoPath)
+        }
+      }
+      setCommitProtect(!commitProtect)
+      toast.info(
+        commitProtect ? 'Commit protect disabled' : 'Commit protect enabled'
+      )
+    } catch {
+      toast.error('Failed to toggle commit protect')
+    } finally {
+      setIsToggling(false)
+    }
+  }, [currentFileId, linkedRepoPaths, commitProtect])
+
+  return (
+    <div className="flex items-center gap-2 border-t border-border pt-4">
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={handleCommit}
+        disabled={isCommitting}
+      >
+        <GitCommitHorizontal className="mr-1.5 h-3.5 w-3.5" />
+        {isCommitting ? 'Committing...' : 'Commit'}
+      </Button>
+      {linkedRepoPaths.length > 0 && (
+        <Button
+          size="sm"
+          variant={commitProtect ? 'default' : 'ghost'}
+          onClick={handleToggleProtect}
+          disabled={isToggling}
+          title={
+            commitProtect
+              ? 'Commit protect ON — external direct commits blocked'
+              : 'Commit protect OFF — external direct commits allowed'
+          }
+        >
+          {commitProtect ? (
+            <ShieldCheck className="h-3.5 w-3.5" />
+          ) : (
+            <ShieldOff className="h-3.5 w-3.5" />
+          )}
+        </Button>
+      )}
+    </div>
+  )
+}
+
 // Main EditorCanvas Component
 export const EditorCanvas = () => {
   const {
@@ -858,7 +977,9 @@ export const EditorCanvas = () => {
       : null
     if (
       block &&
-      (block.block_type === 'markdown' || block.block_type === 'code')
+      (block.block_type === 'markdown' ||
+        block.block_type === 'code' ||
+        block.block_type === 'task')
     ) {
       setLastDocBlockId(block.block_id)
     }
@@ -904,6 +1025,11 @@ export const EditorCanvas = () => {
       }
       if (selectedBlock.block_type === 'code') {
         setDocumentContent(contents?.text || '')
+      } else if (
+        selectedBlock.block_type === 'markdown' ||
+        selectedBlock.block_type === 'task'
+      ) {
+        setDocumentContent(contents?.markdown || contents?.text || '')
       } else {
         setDocumentContent(contents?.markdown || contents?.text || '')
       }
@@ -933,7 +1059,10 @@ export const EditorCanvas = () => {
     try {
       // Get current block content
       let currentContent = ''
-      if (selectedBlock.block_type === 'markdown') {
+      if (
+        selectedBlock.block_type === 'markdown' ||
+        selectedBlock.block_type === 'task'
+      ) {
         const contents = selectedBlock.contents as {
           markdown?: string
           text?: string
@@ -950,7 +1079,11 @@ export const EditorCanvas = () => {
       if (hasChanges) {
         // Content changed: save block first (generates event)
         const capId =
-          selectedBlock.block_type === 'code' ? 'code.write' : 'markdown.write'
+          selectedBlock.block_type === 'code'
+            ? 'code.write'
+            : selectedBlock.block_type === 'task'
+              ? 'task.write'
+              : 'markdown.write'
         const hasPermission = await checkPermission(
           currentFileId,
           selectedBlockId,
@@ -1082,6 +1215,19 @@ export const EditorCanvas = () => {
           onContentChange={handleContentChange}
           onSave={handleBlockSave}
         />
+      )
+    }
+
+    if (blockToRender.block_type === 'task') {
+      return (
+        <div className="space-y-4">
+          <MySTDocument
+            content={documentContent}
+            onContentChange={handleContentChange}
+            onSave={handleBlockSave}
+          />
+          <TaskToolbar blockId={blockToRender.block_id} />
+        </div>
       )
     }
 

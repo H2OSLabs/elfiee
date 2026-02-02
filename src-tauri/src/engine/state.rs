@@ -236,7 +236,7 @@ impl StateProjector {
 
             // Block deletion
             "core.delete" => {
-                // Clean up reverse index: remove this block as a parent of its children
+                // 1. Clean up forward direction: remove this block as a parent of its children
                 if let Some(block) = self.blocks.get(&event.entity) {
                     if let Some(targets) = block.children.get(RELATION_IMPLEMENT) {
                         for target in targets {
@@ -249,8 +249,18 @@ impl StateProjector {
                         }
                     }
                 }
-                // Also remove this block's own parents entry
-                self.parents.remove(&event.entity);
+
+                // 2. Clean up reverse direction: remove this block from parent blocks' children
+                if let Some(parent_ids) = self.parents.remove(&event.entity) {
+                    for parent_id in &parent_ids {
+                        if let Some(parent_block) = self.blocks.get_mut(parent_id) {
+                            if let Some(targets) = parent_block.children.get_mut(RELATION_IMPLEMENT)
+                            {
+                                targets.retain(|id| id != &event.entity);
+                            }
+                        }
+                    }
+                }
 
                 self.blocks.remove(&event.entity);
             }
@@ -1270,6 +1280,51 @@ mod tests {
         assert!(state.get_parents("b").is_empty());
         // A should not exist
         assert!(state.get_block("a").is_none());
+    }
+
+    #[test]
+    fn test_delete_child_cleans_parent_children_map() {
+        let mut state = StateProjector::new();
+
+        state.apply_event(&create_block_event("a", "A", "alice", 1));
+        state.apply_event(&create_block_event("b", "B", "alice", 2));
+        state.apply_event(&create_block_event("c", "C", "alice", 3));
+
+        // A → B, A → C
+        let mut children = StdHashMap::new();
+        children.insert(
+            RELATION_IMPLEMENT.to_string(),
+            vec!["b".to_string(), "c".to_string()],
+        );
+        let link_ev = Event::new(
+            "a".to_string(),
+            "alice/core.link".to_string(),
+            serde_json::json!({ "children": children }),
+            {
+                let mut ts = StdHashMap::new();
+                ts.insert("alice".to_string(), 4);
+                ts
+            },
+        );
+        state.apply_event(&link_ev);
+        assert_eq!(state.get_children("a").len(), 2);
+
+        // Delete B — A's children should shrink to [C]
+        let delete_event = Event::new(
+            "b".to_string(),
+            "alice/core.delete".to_string(),
+            serde_json::json!({}),
+            {
+                let mut ts = StdHashMap::new();
+                ts.insert("alice".to_string(), 5);
+                ts
+            },
+        );
+        state.apply_event(&delete_event);
+
+        assert!(state.get_block("b").is_none());
+        assert_eq!(state.get_children("a"), vec!["c".to_string()]);
+        assert!(state.get_parents("b").is_empty());
     }
 
     #[test]

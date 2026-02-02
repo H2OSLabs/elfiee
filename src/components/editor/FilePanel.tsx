@@ -35,6 +35,7 @@ export const FilePanel = () => {
     getOutlineRepos,
     getLinkedRepos,
     getBlocks,
+    getTaskBlocks,
     createEntry,
     renameEntry,
     renameEntryWithTypeChange,
@@ -42,7 +43,10 @@ export const FilePanel = () => {
     importDirectory,
     checkoutWorkspace,
     createBlock,
+    createTaskBlock,
     deleteBlock,
+    renameBlock,
+    checkoutWorkspace: checkoutWorkspaceAction,
     files,
   } = useAppStore()
   const [isImportModalOpen, setIsImportModalOpen] = useState(false)
@@ -66,6 +70,11 @@ export const FilePanel = () => {
   const linkedRepos = useMemo(
     () => (currentFileId ? getLinkedRepos(currentFileId) : []),
     [currentFileId, getLinkedRepos, files]
+  )
+
+  const taskBlocks = useMemo(
+    () => (currentFileId ? getTaskBlocks(currentFileId) : []),
+    [currentFileId, getTaskBlocks, files]
   )
 
   // --- Handlers ---
@@ -248,6 +257,40 @@ export const FilePanel = () => {
     }
   }
 
+  const handleCreateTask = async () => {
+    if (!currentFileId) return
+    try {
+      await createTaskBlock(currentFileId, 'New Task')
+    } catch {
+      // Error toast already shown
+    }
+  }
+
+  const handleRenameTask = async (blockId: string, newName: string) => {
+    if (!currentFileId) return
+    try {
+      await renameBlock(currentFileId, blockId, newName)
+    } catch {
+      // Error toast already shown
+    }
+  }
+
+  const handleExportTask = async (blockId: string, name: string) => {
+    if (!currentFileId) return
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: `Select Export Destination for ${name}`,
+      })
+      if (selected && typeof selected === 'string') {
+        await checkoutWorkspaceAction(currentFileId, blockId, selected)
+      }
+    } catch {
+      // Error toast already shown
+    }
+  }
+
   const handleAddWorkdir = async (name: string) => {
     if (!currentFileId) return
 
@@ -287,14 +330,6 @@ export const FilePanel = () => {
               <span className="whitespace-nowrap text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Outline
               </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                onClick={() => setShowAddWorkdirDialog(true)}
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
             </div>
             <div className="space-y-4">
               {outlineRepos.map((repo) => (
@@ -386,6 +421,99 @@ export const FilePanel = () => {
                   />
                 </div>
               ))}
+            </div>
+          </div>
+
+          <Separator className="my-2" />
+
+          {/* TASKS Section */}
+          <div className="mb-3 px-2">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <span className="whitespace-nowrap text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Tasks
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                onClick={handleCreateTask}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+            <div className="space-y-0.5">
+              {taskBlocks.map((block) => {
+                const isSelected = selectedBlockId === block.block_id
+
+                return (
+                  <div
+                    key={block.block_id}
+                    className={cn(
+                      'group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors',
+                      isSelected
+                        ? 'bg-accent/10 text-accent'
+                        : 'text-foreground hover:bg-muted/50'
+                    )}
+                    onClick={() => selectBlock(block.block_id)}
+                  >
+                    {/* Title */}
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {block.name || 'Untitled'}
+                    </span>
+
+                    {/* Actions */}
+                    <div className="flex flex-shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MoreHorizontal className="h-3 w-3" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              const newName = prompt('Rename task:', block.name)
+                              if (newName && newName !== block.name) {
+                                handleRenameTask(block.block_id, newName)
+                              }
+                            }}
+                          >
+                            Rename
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleExportTask(block.block_id, block.name)
+                            }}
+                          >
+                            <Download className="mr-2 h-3.5 w-3.5" />
+                            Export
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteRepo(block.block_id, block.name)
+                            }}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-3.5 w-3.5" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                )
+              })}
+              {taskBlocks.length === 0 && (
+                <p className="px-1 py-2 text-xs text-muted-foreground/60">
+                  No tasks yet
+                </p>
+              )}
             </div>
           </div>
 

@@ -59,14 +59,16 @@ export function buildTreeFromEntries(
       path,
       name,
       type: entry.type as 'file' | 'directory',
-      blockId: entry.type === 'file' ? entry.id : null,
+      blockId: relatedBlock ? entry.id : null,
       blockType: relatedBlock?.block_type,
       source: entry.source as 'outline' | 'linked',
       children: [],
       isExpanded: false,
     }
 
-    nodeMap.set(path, node)
+    // Normalize key: 去掉尾随斜杠，使 "agents/" 和 "agents" 匹配
+    const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path
+    nodeMap.set(normalizedPath, node)
 
     // 2. 确定层级关系
     if (segments.length <= 1) {
