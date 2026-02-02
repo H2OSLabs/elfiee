@@ -1085,6 +1085,11 @@ export type AgentContents = {
    * Agent current status
    */
   status: AgentStatus
+  /**
+   * Bot editor_id associated with this agent.
+   * Used by MCP server to attribute operations to the correct identity.
+   */
+  editor_id?: string | null
 }
 /**
  * Result type for agent.create Tauri command
@@ -1119,6 +1124,10 @@ export type AgentCreateV2Payload = {
    * Associated external project Dir Block ID (required)
    */
   target_project_id: string
+  /**
+   * Bot editor_id to associate with this agent
+   */
+  editor_id?: string | null
 }
 /**
  * Payload for agent.disable capability
@@ -1539,7 +1548,7 @@ export type StateSnapshot = {
  */
 export type TaskCommitPayload = Record<string, never>
 /**
- * task.commit 操作的返回结果
+ * Result of a task.commit operation.
  */
 export type TaskCommitResult = {
   /**
@@ -1551,7 +1560,7 @@ export type TaskCommitResult = {
    */
   branch_name: string
   /**
-   * 导出的文件列表
+   * List of exported file paths
    */
   exported_files: string[]
 }

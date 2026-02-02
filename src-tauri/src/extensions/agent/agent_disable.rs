@@ -76,6 +76,7 @@ mod tests {
             name: "elfiee".to_string(),
             target_project_id: "proj-456".to_string(),
             status,
+            editor_id: Some("bot-editor-456".to_string()),
         };
 
         let mut block = Block::new(
@@ -193,5 +194,6 @@ mod tests {
         assert_eq!(contents["name"], "elfiee");
         assert_eq!(contents["target_project_id"], "proj-456");
         assert_eq!(contents["status"], "disabled");
+        assert_eq!(contents["editor_id"], "bot-editor-456");
     }
 }

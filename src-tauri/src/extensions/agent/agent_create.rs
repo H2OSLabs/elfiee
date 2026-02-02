@@ -43,6 +43,7 @@ fn handle_agent_create(cmd: &Command, _block: Option<&Block>) -> CapResult<Vec<E
         name: name.clone(),
         target_project_id: payload.target_project_id.clone(),
         status: AgentStatus::Enabled,
+        editor_id: payload.editor_id.clone(),
     };
 
     // Generate block_id for the new Agent Block
@@ -273,5 +274,44 @@ mod tests {
 
         let result = handle_agent_create(&cmd, None).unwrap();
         assert_eq!(result[0].value["contents"]["status"], "enabled");
+    }
+
+    #[test]
+    fn test_agent_create_v2_with_editor_id() {
+        let cmd = Command::new(
+            "alice".to_string(),
+            "agent.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "target_project_id": "proj-123",
+                "editor_id": "bot-editor-abc"
+            }),
+        );
+
+        let result = handle_agent_create(&cmd, None).unwrap();
+        assert_eq!(result[0].value["contents"]["editor_id"], "bot-editor-abc");
+    }
+
+    #[test]
+    fn test_agent_create_v2_without_editor_id() {
+        let cmd = Command::new(
+            "alice".to_string(),
+            "agent.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "target_project_id": "proj-123"
+            }),
+        );
+
+        let result = handle_agent_create(&cmd, None).unwrap();
+        // editor_id should be omitted when None (skip_serializing_if)
+        assert!(
+            result[0].value["contents"]
+                .as_object()
+                .unwrap()
+                .get("editor_id")
+                .is_none()
+                || result[0].value["contents"]["editor_id"].is_null()
+        );
     }
 }

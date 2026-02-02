@@ -218,7 +218,7 @@ if let Some(elf_block) = handle.get_block(elf_block_id.clone()).await {
 
 | 模块 | 关系 | 说明 |
 |------|------|------|
-| Agent 模块 (F3) | 上游消费者 | `agent.enable` 创建 symlink 指向 block 目录，Claude Code 通过 symlink 读取 SKILL.md |
+| Agent 模块 (F3) | 上游消费者 | `agent.enable` 创建 symlink 指向 block 目录，Claude Code 通过 symlink 读取 SKILL.md。支持多 Agent（每个 bot editor 独立创建），MCP Server 通过 `AgentContents.editor_id` 归因操作到正确的 bot 身份。详见 `CHANGELOG-AGENT-IDENTITY-AND-MULTI-AGENT.md` |
 | `.elf/` 初始化 (I10) | 调用方 | `bootstrap_elf_meta` Step 4 调用 `init_elfiee_client` |
 | MCP Server (F4-F5) | 配置对齐 | mcp.json 中的 SSE URL 与 MCP Server 端口一致 |
 

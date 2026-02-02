@@ -193,7 +193,12 @@ export const AddCollaboratorDialog = ({
       // 3. If Bot on a directory block, also create Agent (MCP integration)
       if (newEditorType === 'Bot' && blockType === 'directory') {
         try {
-          await createAgent(fileId, blockId, newEditor.name)
+          await createAgent(
+            fileId,
+            blockId,
+            newEditor.name,
+            newEditor.editor_id
+          )
         } catch (agentError) {
           // Agent creation is best-effort — editor was already created successfully
           console.warn('Agent creation failed:', agentError)

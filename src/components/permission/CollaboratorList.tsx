@@ -1,11 +1,11 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { UserPlus, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/lib/app-store'
 import { CollaboratorItem } from './CollaboratorItem'
 import { AddCollaboratorDialog } from './AddCollaboratorDialog'
 import { toast } from 'sonner'
-import type { Block, Editor } from '@/bindings'
+import type { AgentContents, Block, Editor } from '@/bindings'
 
 interface CollaboratorListProps {
   fileId: string
@@ -36,9 +36,63 @@ export const CollaboratorList = ({
       (e) => e.editor_id === fileState.activeEditorId
     )
   })
+  const blocks = useAppStore((state) => {
+    const fileState = state.files.get(fileId)
+    return fileState?.blocks || []
+  })
   const grantCapability = useAppStore((state) => state.grantCapability)
   const revokeCapability = useAppStore((state) => state.revokeCapability)
   const checkPermission = useAppStore((state) => state.checkPermission)
+  const createAgent = useAppStore((state) => state.createAgent)
+  const enableAgent = useAppStore((state) => state.enableAgent)
+  const disableAgent = useAppStore((state) => state.disableAgent)
+
+  // Filter agent blocks for matching bot editors to their agent blocks
+  const agentBlocks = useMemo(
+    () => blocks.filter((b) => b.block_type === 'agent'),
+    [blocks]
+  )
+
+  // Find the agent block associated with a bot editor
+  const findAgentBlockForEditor = useCallback(
+    (editor: Editor): Block | undefined => {
+      if (editor.editor_type !== 'Bot') return undefined
+      return agentBlocks.find((block) => {
+        const contents = block.contents as AgentContents | undefined
+        return (
+          contents?.name === editor.name &&
+          contents?.target_project_id === blockId
+        )
+      })
+    },
+    [agentBlocks, blockId]
+  )
+
+  // Handler for creating an agent for a bot editor (when no agent block exists yet)
+  const handleCreateAgent = useCallback(
+    async (editorId: string) => {
+      const editor = editors.find((e) => e.editor_id === editorId)
+      if (!editor) return
+      await createAgent(fileId, blockId, editor.name, editor.editor_id)
+    },
+    [fileId, blockId, editors, createAgent]
+  )
+
+  // Handler for toggling agent enable/disable status
+  const handleToggleAgentStatus = useCallback(
+    async (agentBlockId: string, currentStatus: string) => {
+      try {
+        if (currentStatus === 'enabled') {
+          await disableAgent(fileId, agentBlockId)
+        } else {
+          await enableAgent(fileId, agentBlockId)
+        }
+      } catch (error) {
+        console.error('Failed to toggle agent status:', error)
+      }
+    },
+    [fileId, enableAgent, disableAgent]
+  )
 
   // NOTE: We do NOT use deleteEditor here anymore.
   // "Removing access" simply means revoking all permissions on this block.
@@ -270,6 +324,9 @@ export const CollaboratorList = ({
             isActive={editor.editor_id === activeEditor?.editor_id}
             onGrantChange={handleGrantChange}
             onRemoveAccess={handleRemoveAccess}
+            agentBlock={findAgentBlockForEditor(editor)}
+            onToggleAgentStatus={handleToggleAgentStatus}
+            onCreateAgent={handleCreateAgent}
           />
         ))}
       </div>

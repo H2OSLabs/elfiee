@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CollaboratorItem } from './CollaboratorItem'
-import type { Editor, Grant } from '@/bindings'
+import type { Block, Editor, Grant } from '@/bindings'
 
 describe('CollaboratorItem Component', () => {
   const mockOnGrantChange = vi.fn()
@@ -463,6 +463,186 @@ describe('CollaboratorItem Component', () => {
       // Should display editor name and permissions
       expect(screen.getByText('Alice')).toBeInTheDocument()
       expect(screen.getByText('Read')).toBeInTheDocument()
+    })
+  })
+
+  describe('Agent Status Toggle', () => {
+    const mockOnToggleAgentStatus = vi.fn()
+
+    const mockAgentBlock: Block = {
+      block_id: 'agent-block-789',
+      name: 'CodeReviewer Agent',
+      block_type: 'agent',
+      owner: 'owner-123',
+      contents: {
+        name: 'CodeReviewer',
+        target_project_id: 'dir-block-1',
+        status: 'enabled',
+      },
+      children: {},
+      metadata: {},
+    }
+
+    beforeEach(() => {
+      mockOnToggleAgentStatus.mockClear()
+    })
+
+    it('should show toggle switch for bot editor with agent block', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={mockAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      const toggle = screen.getByTestId('agent-toggle-bot-456')
+      expect(toggle).toBeInTheDocument()
+      expect(screen.getByText('Active')).toBeInTheDocument()
+    })
+
+    it('should show toggle for bot editor without agent block (switch off)', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const toggle = screen.getByTestId('agent-toggle-bot-456')
+      expect(toggle).toBeInTheDocument()
+      // Should show Disabled since no agent block exists
+      expect(screen.getByText('Inactive')).toBeInTheDocument()
+    })
+
+    it('should NOT show toggle for human editor', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={mockGrants}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={mockAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      expect(
+        screen.queryByTestId('agent-toggle-human-123')
+      ).not.toBeInTheDocument()
+    })
+
+    it('should call onToggleAgentStatus when toggle is clicked', async () => {
+      const user = userEvent.setup()
+      mockOnToggleAgentStatus.mockResolvedValue(undefined)
+
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={mockAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      const toggle = screen.getByTestId('agent-toggle-bot-456')
+      await user.click(toggle)
+
+      await waitFor(() => {
+        expect(mockOnToggleAgentStatus).toHaveBeenCalledWith(
+          'agent-block-789',
+          'enabled'
+        )
+      })
+    })
+
+    it('should show Disabled status for disabled agent', () => {
+      const disabledAgentBlock: Block = {
+        ...mockAgentBlock,
+        contents: {
+          name: 'CodeReviewer',
+          target_project_id: 'dir-block-1',
+          status: 'disabled',
+        },
+      }
+
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={disabledAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      expect(screen.getByText('Inactive')).toBeInTheDocument()
+    })
+
+    it('should call onCreateAgent when toggling on without agent block', async () => {
+      const user = userEvent.setup()
+      const mockOnCreateAgent = vi.fn().mockResolvedValue(undefined)
+
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          onCreateAgent={mockOnCreateAgent}
+        />
+      )
+
+      const toggle = screen.getByTestId('agent-toggle-bot-456')
+      await user.click(toggle)
+
+      await waitFor(() => {
+        expect(mockOnCreateAgent).toHaveBeenCalledWith('bot-456')
+      })
+    })
+
+    it('should show Agent label alongside the toggle', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={mockAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      expect(screen.getByText('Agent Capabilities')).toBeInTheDocument()
     })
   })
 })
