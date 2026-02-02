@@ -5,6 +5,7 @@ import {
   Folder,
   FileText,
   FileCode,
+  CheckSquare,
   Plus,
   MoreHorizontal,
   Trash2,
@@ -63,9 +64,11 @@ const InlineEditInput = ({
   const Icon =
     type === 'directory'
       ? Folder
-      : blockType === 'markdown'
-        ? FileText
-        : FileCode
+      : blockType === 'task'
+        ? CheckSquare
+        : blockType === 'markdown'
+          ? FileText
+          : FileCode
 
   return (
     <div
@@ -161,9 +164,11 @@ const TreeNode = ({
   const Icon =
     node.type === 'directory'
       ? Folder
-      : node.blockType === 'markdown'
-        ? FileText
-        : FileCode
+      : node.blockType === 'task'
+        ? CheckSquare
+        : node.blockType === 'markdown'
+          ? FileText
+          : FileCode
 
   return (
     <div className="w-full">

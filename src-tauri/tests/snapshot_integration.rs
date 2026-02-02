@@ -516,3 +516,87 @@ async fn test_unicode_content_snapshot() {
 
     handle.shutdown().await;
 }
+
+// =============================================================================
+// Task Block 快照测试
+// =============================================================================
+
+#[tokio::test]
+async fn test_task_write_creates_snapshot() {
+    let (archive, handle, _elf_path) = setup_engine().await;
+    let temp_path = archive.temp_path();
+
+    // 创建 task block
+    let block_id = create_block(&handle, "Login Task", "task").await;
+
+    // 写入 markdown content
+    let cmd = Command::new(
+        "system".to_string(),
+        "task.write".to_string(),
+        block_id.clone(),
+        serde_json::json!({
+            "content": "# 实现登录功能\n\n添加 OAuth 登录支持"
+        }),
+    );
+    handle.process_command(cmd).await.unwrap();
+
+    // 验证快照文件（task → body.md，内容为 markdown）
+    let snapshot_path = temp_path.join(format!("block-{}/body.md", block_id));
+    assert!(
+        snapshot_path.exists(),
+        "Task block should have body.md snapshot"
+    );
+
+    let content = fs::read_to_string(&snapshot_path).unwrap();
+    assert!(
+        content.contains("# 实现登录功能"),
+        "Snapshot should contain heading"
+    );
+    assert!(
+        content.contains("添加 OAuth 登录支持"),
+        "Snapshot should contain description text"
+    );
+
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_task_write_updates_snapshot() {
+    let (archive, handle, _elf_path) = setup_engine().await;
+    let temp_path = archive.temp_path();
+
+    let block_id = create_block(&handle, "Update Task", "task").await;
+
+    // 第一次写入
+    let cmd1 = Command::new(
+        "system".to_string(),
+        "task.write".to_string(),
+        block_id.clone(),
+        serde_json::json!({
+            "content": "# 旧标题\n\n旧描述"
+        }),
+    );
+    handle.process_command(cmd1).await.unwrap();
+
+    // 第二次写入
+    let cmd2 = Command::new(
+        "system".to_string(),
+        "task.write".to_string(),
+        block_id.clone(),
+        serde_json::json!({
+            "content": "# 新标题\n\n新描述"
+        }),
+    );
+    handle.process_command(cmd2).await.unwrap();
+
+    let snapshot_path = temp_path.join(format!("block-{}/body.md", block_id));
+    let content = fs::read_to_string(&snapshot_path).unwrap();
+    assert!(content.contains("# 新标题"), "Should have updated title");
+    assert!(
+        content.contains("新描述"),
+        "Should have updated description"
+    );
+    assert!(!content.contains("旧标题"), "Old title should be gone");
+
+    handle.shutdown().await;
+}
