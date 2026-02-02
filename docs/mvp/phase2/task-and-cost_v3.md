@@ -149,7 +149,7 @@ pub enum AgentStatus {
 
 **内置工具目录结构**：
 ```
-.elf/Agents/elfiee-client/       # 静态资源，所有 Agent 共享
+.elf/Agents/elfiee-client/       #v 静态资源，所有 Agent 共享
 ├── SKILL.md                     # Claude Skills 定义
 ├── mcp.json                     # MCP 配置模板
 └── references/
