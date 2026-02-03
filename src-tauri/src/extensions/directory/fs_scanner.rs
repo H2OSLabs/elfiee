@@ -1,3 +1,4 @@
+use ignore::overrides::OverrideBuilder;
 use ignore::WalkBuilder;
 use std::path::{Path, PathBuf};
 
@@ -31,6 +32,11 @@ pub struct ScanOptions {
     pub follow_symlinks: bool,
     /// Whether to ignore hidden files (starting with dot)
     pub ignore_hidden: bool,
+    /// Directory names to always exclude (applied as highest-priority overrides,
+    /// effective even when no .gitignore exists). Empty by default if you want
+    /// to rely solely on .gitignore; populated with common dependency/build
+    /// directories in `Default` as a safety net.
+    pub ignore_patterns: Vec<String>,
     /// Maximum file size in bytes to include
     pub max_file_size: u64,
     /// Maximum number of files to scan
@@ -45,6 +51,41 @@ impl Default for ScanOptions {
             max_depth: 100,
             follow_symlinks: false,
             ignore_hidden: true,
+            ignore_patterns: vec![
+                // JavaScript / TypeScript
+                "node_modules",
+                ".next",
+                ".nuxt",
+                // Rust
+                "target",
+                // Python
+                "__pycache__",
+                ".venv",
+                "venv",
+                ".tox",
+                ".mypy_cache",
+                ".pytest_cache",
+                // Go
+                "vendor",
+                // Java / Kotlin / Android
+                ".gradle",
+                ".m2",
+                // iOS / macOS
+                "Pods",
+                // .NET / C#
+                "packages",
+                // Generic build / output
+                "dist",
+                "build",
+                "out",
+                "coverage",
+                ".cache",
+                ".parcel-cache",
+                ".turbo",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             max_file_size: 10 * 1024 * 1024, // 10 MB
             max_files: 10_000,
             use_gitignore: true,
@@ -76,6 +117,20 @@ pub fn scan_directory(root: &Path, options: &ScanOptions) -> Result<Vec<FileInfo
     // Also read .gitignore in non-git directories (no .git folder required)
     if options.use_gitignore {
         builder.add_custom_ignore_filename(".gitignore");
+    }
+
+    // Apply ignore_patterns as highest-priority overrides (effective even without .gitignore)
+    if !options.ignore_patterns.is_empty() {
+        let mut overrides = OverrideBuilder::new(root);
+        for dir in &options.ignore_patterns {
+            overrides
+                .add(&format!("!**/{}", dir))
+                .map_err(|e| format!("Invalid ignore dir '{}': {}", dir, e))?;
+        }
+        let built = overrides
+            .build()
+            .map_err(|e| format!("Failed to build overrides: {}", e))?;
+        builder.overrides(built);
     }
 
     for result in builder.build() {
@@ -166,6 +221,28 @@ mod tests {
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].file_name, "visible.txt");
+    }
+
+    #[test]
+    fn test_scan_skips_default_ignore_patterns() {
+        let temp_dir = TempDir::new().unwrap();
+        // Create common dependency directories
+        fs::create_dir(temp_dir.path().join("node_modules")).unwrap();
+        fs::write(temp_dir.path().join("node_modules/pkg.json"), "{}").unwrap();
+        fs::create_dir(temp_dir.path().join("__pycache__")).unwrap();
+        fs::write(temp_dir.path().join("__pycache__/mod.pyc"), "").unwrap();
+        fs::create_dir(temp_dir.path().join("target")).unwrap();
+        fs::write(temp_dir.path().join("target/debug"), "").unwrap();
+        fs::write(temp_dir.path().join("main.rs"), "code").unwrap();
+
+        let options = ScanOptions::default();
+        let files = scan_directory(temp_dir.path(), &options).unwrap();
+
+        let names: Vec<&str> = files.iter().map(|f| f.file_name.as_str()).collect();
+        assert!(names.contains(&"main.rs"));
+        assert!(!names.contains(&"pkg.json"));
+        assert!(!names.contains(&"mod.pyc"));
+        assert!(!names.contains(&"debug"));
     }
 
     #[test]
