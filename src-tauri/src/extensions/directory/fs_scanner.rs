@@ -32,10 +32,9 @@ pub struct ScanOptions {
     pub follow_symlinks: bool,
     /// Whether to ignore hidden files (starting with dot)
     pub ignore_hidden: bool,
-    /// Directory names to always exclude (applied as highest-priority overrides,
-    /// effective even when no .gitignore exists). Empty by default if you want
-    /// to rely solely on .gitignore; populated with common dependency/build
-    /// directories in `Default` as a safety net.
+    /// Directory/file patterns to always exclude (applied as highest-priority
+    /// overrides, effective even when no .gitignore exists). Loaded from the
+    /// bundled `.elfignore` at compile time.
     pub ignore_patterns: Vec<String>,
     /// Maximum file size in bytes to include
     pub max_file_size: u64,
@@ -45,47 +44,27 @@ pub struct ScanOptions {
     pub use_gitignore: bool,
 }
 
+/// Content of `.elfignore`, bundled at compile time.
+const DEFAULT_ELFIGNORE: &str = include_str!("../../.elfignore");
+
+/// Parse `.elfignore` content into a list of patterns.
+/// Strips comments, empty lines, and trailing slashes.
+fn parse_elfignore(content: &str) -> Vec<String> {
+    content
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.trim_end_matches('/').to_string())
+        .collect()
+}
+
 impl Default for ScanOptions {
     fn default() -> Self {
         Self {
             max_depth: 100,
             follow_symlinks: false,
             ignore_hidden: true,
-            ignore_patterns: vec![
-                // JavaScript / TypeScript
-                "node_modules",
-                ".next",
-                ".nuxt",
-                // Rust
-                "target",
-                // Python
-                "__pycache__",
-                ".venv",
-                "venv",
-                ".tox",
-                ".mypy_cache",
-                ".pytest_cache",
-                // Go
-                "vendor",
-                // Java / Kotlin / Android
-                ".gradle",
-                ".m2",
-                // iOS / macOS
-                "Pods",
-                // .NET / C#
-                "packages",
-                // Generic build / output
-                "dist",
-                "build",
-                "out",
-                "coverage",
-                ".cache",
-                ".parcel-cache",
-                ".turbo",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect(),
+            ignore_patterns: parse_elfignore(DEFAULT_ELFIGNORE),
             max_file_size: 10 * 1024 * 1024, // 10 MB
             max_files: 10_000,
             use_gitignore: true,
@@ -118,9 +97,6 @@ pub fn scan_directory(root: &Path, options: &ScanOptions) -> Result<Vec<FileInfo
     if options.use_gitignore {
         builder.add_custom_ignore_filename(".gitignore");
     }
-
-    // Support .elfignore files (same glob syntax as .gitignore)
-    builder.add_custom_ignore_filename(".elfignore");
 
     // Apply ignore_patterns as highest-priority overrides (effective even without .gitignore)
     if !options.ignore_patterns.is_empty() {
@@ -227,49 +203,53 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_skips_default_ignore_patterns() {
+    fn test_scan_skips_ignore_patterns() {
         let temp_dir = TempDir::new().unwrap();
-        // Create common dependency directories
         fs::create_dir(temp_dir.path().join("node_modules")).unwrap();
         fs::write(temp_dir.path().join("node_modules/pkg.json"), "{}").unwrap();
         fs::create_dir(temp_dir.path().join("__pycache__")).unwrap();
         fs::write(temp_dir.path().join("__pycache__/mod.pyc"), "").unwrap();
-        fs::create_dir(temp_dir.path().join("target")).unwrap();
-        fs::write(temp_dir.path().join("target/debug"), "").unwrap();
         fs::write(temp_dir.path().join("main.rs"), "code").unwrap();
 
-        let options = ScanOptions::default();
+        let options = ScanOptions {
+            ignore_patterns: vec!["node_modules".to_string(), "__pycache__".to_string()],
+            ..Default::default()
+        };
         let files = scan_directory(temp_dir.path(), &options).unwrap();
 
         let names: Vec<&str> = files.iter().map(|f| f.file_name.as_str()).collect();
         assert!(names.contains(&"main.rs"));
         assert!(!names.contains(&"pkg.json"));
         assert!(!names.contains(&"mod.pyc"));
-        assert!(!names.contains(&"debug"));
     }
 
     #[test]
-    fn test_scan_respects_elfignore() {
-        let temp_dir = TempDir::new().unwrap();
-        // .elfignore uses the same glob syntax as .gitignore
-        fs::write(temp_dir.path().join(".elfignore"), "secret/\n*.dat\n").unwrap();
-        fs::create_dir(temp_dir.path().join("secret")).unwrap();
-        fs::write(temp_dir.path().join("secret/key.pem"), "private").unwrap();
-        fs::write(temp_dir.path().join("data.dat"), "binary").unwrap();
-        fs::write(temp_dir.path().join("main.rs"), "code").unwrap();
+    fn test_parse_elfignore() {
+        let content = r#"
+# This is a comment
+node_modules/
+__pycache__/
 
-        let options = ScanOptions::default();
-        let files = scan_directory(temp_dir.path(), &options).unwrap();
+  target
+# Another comment
+  .venv/
+"#;
+        let patterns = parse_elfignore(content);
+        assert_eq!(
+            patterns,
+            vec!["node_modules", "__pycache__", "target", ".venv"]
+        );
+    }
 
-        let names: Vec<&str> = files
-            .iter()
-            .filter(|f| !f.is_directory)
-            .map(|f| f.file_name.as_str())
-            .collect();
-
-        assert!(names.contains(&"main.rs"));
-        assert!(!names.contains(&"key.pem"));
-        assert!(!names.contains(&"data.dat"));
+    #[test]
+    fn test_default_elfignore_contains_expected_patterns() {
+        let patterns = parse_elfignore(DEFAULT_ELFIGNORE);
+        assert!(patterns.contains(&"node_modules".to_string()));
+        assert!(patterns.contains(&"__pycache__".to_string()));
+        assert!(patterns.contains(&"target".to_string()));
+        assert!(patterns.contains(&"*.png".to_string()));
+        assert!(patterns.contains(&"*.exe".to_string()));
+        assert!(patterns.contains(&".DS_Store".to_string()));
     }
 
     #[test]
@@ -316,6 +296,27 @@ mod tests {
         assert!(file_names.contains(&"keep.rs"));
         assert!(!file_names.contains(&"temp.tmp"));
         assert!(!file_names.contains(&"remove.bak"));
+    }
+
+    #[test]
+    fn test_scan_skips_glob_patterns() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("app.rs"), "code").unwrap();
+        fs::write(temp_dir.path().join("logo.png"), &[0x89, 0x50, 0x4E, 0x47]).unwrap();
+        fs::write(temp_dir.path().join("photo.jpg"), &[0xFF, 0xD8]).unwrap();
+        fs::write(temp_dir.path().join("data.db"), &[0x00]).unwrap();
+
+        let options = ScanOptions {
+            ignore_patterns: vec!["*.png".to_string(), "*.jpg".to_string(), "*.db".to_string()],
+            ..Default::default()
+        };
+        let files = scan_directory(temp_dir.path(), &options).unwrap();
+
+        let names: Vec<&str> = files.iter().map(|f| f.file_name.as_str()).collect();
+        assert!(names.contains(&"app.rs"));
+        assert!(!names.contains(&"logo.png"));
+        assert!(!names.contains(&"photo.jpg"));
+        assert!(!names.contains(&"data.db"));
     }
 
     #[test]
