@@ -119,6 +119,9 @@ pub fn scan_directory(root: &Path, options: &ScanOptions) -> Result<Vec<FileInfo
         builder.add_custom_ignore_filename(".gitignore");
     }
 
+    // Support .elfignore files (same glob syntax as .gitignore)
+    builder.add_custom_ignore_filename(".elfignore");
+
     // Apply ignore_patterns as highest-priority overrides (effective even without .gitignore)
     if !options.ignore_patterns.is_empty() {
         let mut overrides = OverrideBuilder::new(root);
@@ -243,6 +246,30 @@ mod tests {
         assert!(!names.contains(&"pkg.json"));
         assert!(!names.contains(&"mod.pyc"));
         assert!(!names.contains(&"debug"));
+    }
+
+    #[test]
+    fn test_scan_respects_elfignore() {
+        let temp_dir = TempDir::new().unwrap();
+        // .elfignore uses the same glob syntax as .gitignore
+        fs::write(temp_dir.path().join(".elfignore"), "secret/\n*.dat\n").unwrap();
+        fs::create_dir(temp_dir.path().join("secret")).unwrap();
+        fs::write(temp_dir.path().join("secret/key.pem"), "private").unwrap();
+        fs::write(temp_dir.path().join("data.dat"), "binary").unwrap();
+        fs::write(temp_dir.path().join("main.rs"), "code").unwrap();
+
+        let options = ScanOptions::default();
+        let files = scan_directory(temp_dir.path(), &options).unwrap();
+
+        let names: Vec<&str> = files
+            .iter()
+            .filter(|f| !f.is_directory)
+            .map(|f| f.file_name.as_str())
+            .collect();
+
+        assert!(names.contains(&"main.rs"));
+        assert!(!names.contains(&"key.pem"));
+        assert!(!names.contains(&"data.dat"));
     }
 
     #[test]
