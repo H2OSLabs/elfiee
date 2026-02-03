@@ -29,8 +29,8 @@ use std::path::PathBuf;
 use std::thread;
 use tauri::{AppHandle, Emitter, State};
 
+use super::pty::{resize as pty_resize, spawn as pty_spawn, write as pty_write, SpawnConfig};
 use super::{TerminalSession, TerminalState};
-use crate::utils::{pty_resize, pty_spawn, pty_write, SpawnConfig};
 
 /// Payload for PTY output events sent to the frontend.
 #[derive(Clone, Serialize)]

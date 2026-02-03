@@ -20,7 +20,7 @@ use std::path::Path;
 /// To modify the hook: edit `templates/elf-meta/git/hooks/pre-commit`, recompile, restart.
 /// This enables dogfooding — verify hook changes in Elfiee before they take effect.
 pub const PRE_COMMIT_HOOK_CONTENT: &str =
-    include_str!("../../templates/elf-meta/git/hooks/pre-commit");
+    include_str!("../../../templates/elf-meta/git/hooks/pre-commit");
 
 /// Inject git hooks (set core.hooksPath to .elf/git/hooks/).
 ///

@@ -31,6 +31,8 @@ use specta::Type;
 // Module Exports
 // ============================================================================
 
+pub mod git;
+pub mod git_hooks;
 pub mod task_write;
 pub use task_write::*;
 

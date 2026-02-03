@@ -8,13 +8,13 @@
 //! Business logic is in `do_*` functions, shared between Tauri commands,
 //! MCP server, and auto-disconnect handler (transport.rs).
 
+use crate::extensions::agent::mcp_config;
 use crate::extensions::agent::{
     AgentContents, AgentCreatePayload, AgentCreateResult, AgentDisableResult, AgentEnableResult,
     AgentStatus,
 };
 use crate::models::Command;
 use crate::state::AppState;
-use crate::utils::mcp_config;
 use std::path::Path;
 use std::sync::Arc;
 use tauri::State;

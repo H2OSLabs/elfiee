@@ -1,3 +1,7 @@
+use crate::extensions::task::git::{git_commit_flow, is_git_repo, sanitize_branch_name};
+use crate::extensions::task::git_hooks::{
+    inject_git_hooks, is_hooks_injected, remove_git_hooks, PRE_COMMIT_HOOK_CONTENT,
+};
 /// Tauri commands for task operations.
 ///
 /// Implements the I/O side of the Split Pattern for task.commit:
@@ -8,10 +12,6 @@
 /// Business logic is in `do_commit_task`, shared between Tauri command and MCP server.
 use crate::models::Command;
 use crate::state::AppState;
-use crate::utils::git::{git_commit_flow, is_git_repo, sanitize_branch_name};
-use crate::utils::git_hooks::{
-    inject_git_hooks, is_hooks_injected, remove_git_hooks, PRE_COMMIT_HOOK_CONTENT,
-};
 use crate::utils::path_validator::validate_virtual_path;
 use serde::{Deserialize, Serialize};
 use specta::specta;

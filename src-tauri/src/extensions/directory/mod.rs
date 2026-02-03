@@ -9,6 +9,7 @@ use specta::Type;
 // ============================================================================
 
 pub mod directory_import;
+pub mod fs_scanner;
 pub use directory_import::*;
 
 pub mod directory_export;
