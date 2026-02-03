@@ -102,6 +102,13 @@ vi.mock('@tauri-apps/api/core', () => ({
   Channel: vi.fn(),
 }))
 
+// Mock @tauri-apps/api/event (used by typed events in bindings.ts)
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+  once: vi.fn(() => Promise.resolve(() => {})),
+  emit: vi.fn(),
+}))
+
 // Mock @tauri-apps/plugin-dialog
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),

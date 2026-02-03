@@ -65,45 +65,52 @@ fn handle_create(cmd: &Command, block: Option<&Block>) -> CapResult<Vec<Event>> 
 
     // Step 6: Handle creation based on entry_type
     if payload.entry_type == "file" {
-        // Create file: generate new Content Block + add entry
-        let file_block_id = uuid::Uuid::new_v4().to_string();
-        let file_name = payload
-            .path
-            .split('/')
-            .last()
-            .unwrap_or(&payload.path)
-            .to_string();
-        let block_type = payload.block_type.unwrap_or_else(|| "markdown".to_string());
-
-        // Unified field logic
-        let contents = if block_type == "markdown" {
-            json!({
-                "markdown": payload.content.unwrap_or_default(),
-                "source": payload.source
-            })
+        let file_block_id = if let Some(existing_id) = payload.existing_block_id {
+            // Use existing block — skip core.create, just register in directory index
+            existing_id
         } else {
-            json!({
-                "text": payload.content.unwrap_or_default(),
-                "source": payload.source
-            })
-        };
+            // Create file: generate new Content Block + add entry
+            let new_id = uuid::Uuid::new_v4().to_string();
+            let file_name = payload
+                .path
+                .split('/')
+                .last()
+                .unwrap_or(&payload.path)
+                .to_string();
+            let block_type = payload.block_type.unwrap_or_else(|| "markdown".to_string());
 
-        // Event 1: Create Content Block (core.create)
-        // NOTE: count=1 is a placeholder. Engine actor will update it with correct vector clock.
-        events.push(create_event(
-            file_block_id.clone(),
-            "core.create",
-            json!({
-                "name": file_name,
-                "type": block_type,
-                "owner": cmd.editor_id,
-                "contents": contents,
-                "children": {},
-                "metadata": {}
-            }),
-            &cmd.editor_id,
-            1,
-        ));
+            // Unified field logic
+            let contents = if block_type == "markdown" {
+                json!({
+                    "markdown": payload.content.unwrap_or_default(),
+                    "source": payload.source
+                })
+            } else {
+                json!({
+                    "text": payload.content.unwrap_or_default(),
+                    "source": payload.source
+                })
+            };
+
+            // Event 1: Create Content Block (core.create)
+            // NOTE: count=1 is a placeholder. Engine actor will update it with correct vector clock.
+            events.push(create_event(
+                new_id.clone(),
+                "core.create",
+                json!({
+                    "name": file_name,
+                    "type": block_type,
+                    "owner": cmd.editor_id,
+                    "contents": contents,
+                    "children": {},
+                    "metadata": {}
+                }),
+                &cmd.editor_id,
+                1,
+            ));
+
+            new_id
+        };
 
         // Add entry to Directory
         entries.insert(

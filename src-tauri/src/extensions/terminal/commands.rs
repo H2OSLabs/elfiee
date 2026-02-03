@@ -21,25 +21,20 @@
 //! PTY operations use pure functions from `utils/pty.rs`.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use serde::Serialize;
+use dashmap::DashMap;
 use specta::specta;
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::thread;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Manager, State};
+use tauri_specta::Event;
 
 use super::pty::{resize as pty_resize, spawn as pty_spawn, write as pty_write, SpawnConfig};
 use super::{TerminalSession, TerminalState};
-
-/// Payload for PTY output events sent to the frontend.
-#[derive(Clone, Serialize)]
-struct PtyOutputPayload {
-    /// Base64 encoded output data
-    data: String,
-    /// The terminal block ID
-    block_id: String,
-}
+use crate::events::PtyOutputEvent;
 
 // ============================================================================
 // Shell Initialization
@@ -225,7 +220,16 @@ pub async fn init_pty_session(
         }
     }
 
-    // Spawn reader thread to forward PTY output to frontend
+    // Create output buffer for MCP terminal_execute to capture output
+    let output_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
+    {
+        let app_state = app.state::<crate::state::AppState>();
+        app_state
+            .terminal_output_buffers
+            .insert(block_id.clone(), output_buffer.clone());
+    }
+
+    // Spawn reader thread to forward PTY output to frontend AND buffer
     // Thread exits naturally when PTY is closed (reader returns EOF)
     let block_id_clone = block_id.clone();
     let mut reader = handle.reader;
@@ -241,12 +245,22 @@ pub async fn init_pty_session(
                 Ok(n) => {
                     // Encode output as base64 (frontend expects this format)
                     let data = BASE64.encode(&buf[..n]);
-                    let payload = PtyOutputPayload {
+                    // Emit typed event (frontend listens via events.ptyOutputEvent)
+                    let _ = PtyOutputEvent {
                         data,
                         block_id: block_id_clone.clone(),
-                    };
-                    // Emit to "pty-out" event (frontend listens on this)
-                    let _ = app.emit("pty-out", payload);
+                    }
+                    .emit(&app);
+
+                    // Also write raw bytes to output buffer (for MCP capture)
+                    if let Ok(mut output) = output_buffer.lock() {
+                        output.extend_from_slice(&buf[..n]);
+                        // Cap buffer at ~1MB to prevent unbounded growth
+                        if output.len() > 1_048_576 {
+                            let drain_to = output.len() - 1_048_576;
+                            output.drain(..drain_to);
+                        }
+                    }
                 }
                 Err(e) => {
                     // Log error but continue (may be temporary)
@@ -349,6 +363,7 @@ pub async fn resize_pty(
 #[tauri::command]
 #[specta]
 pub async fn close_pty_session(
+    app: AppHandle,
     state: State<'_, TerminalState>,
     block_id: String,
 ) -> Result<(), String> {
@@ -356,6 +371,100 @@ pub async fn close_pty_session(
     // Removing and dropping the session releases PTY resources,
     // causing the reader thread to receive EOF and exit
     sessions.remove(&block_id);
+
+    // Clean up the output buffer
+    let app_state = app.state::<crate::state::AppState>();
+    app_state.terminal_output_buffers.remove(&block_id);
+
+    Ok(())
+}
+
+// ============================================================================
+// MCP Helper Functions
+// ============================================================================
+
+/// Start a PTY session for MCP use (no Tauri AppHandle required).
+///
+/// Unlike `init_pty_session`, this does NOT emit Tauri "pty-out" events.
+/// The reader thread only writes to the output buffer, which MCP
+/// `terminal_execute` polls to capture command output.
+///
+/// If a session for `block_id` already exists, returns Ok(()) immediately.
+pub fn start_pty_for_mcp(
+    sessions: &Arc<Mutex<HashMap<String, TerminalSession>>>,
+    buffers: &Arc<DashMap<String, Arc<Mutex<Vec<u8>>>>>,
+    block_id: &str,
+    cols: u16,
+    rows: u16,
+    cwd: Option<&str>,
+) -> Result<(), String> {
+    // Check if session already exists
+    {
+        let sessions_guard = sessions.lock().unwrap();
+        if sessions_guard.contains_key(block_id) {
+            // Ensure buffer exists even if session was created elsewhere
+            if !buffers.contains_key(block_id) {
+                buffers.insert(block_id.to_string(), Arc::new(Mutex::new(Vec::new())));
+            }
+            return Ok(());
+        }
+    }
+
+    let cwd_path = cwd.map(PathBuf::from);
+    let shell = detect_shell();
+
+    let config = SpawnConfig {
+        cols,
+        rows,
+        cwd: cwd_path.as_deref(),
+        shell: Some(shell),
+        args: vec![],
+    };
+
+    let handle = pty_spawn(config)?;
+
+    let session = TerminalSession {
+        writer: handle.writer,
+        master: handle.master,
+    };
+
+    // Store session
+    {
+        let mut sessions_guard = sessions.lock().unwrap();
+        sessions_guard.insert(block_id.to_string(), session);
+    }
+
+    // Create output buffer
+    let output_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
+    buffers.insert(block_id.to_string(), output_buffer.clone());
+
+    // Reader thread — only writes to buffer (no frontend events)
+    let block_id_owned = block_id.to_string();
+    let mut reader = handle.reader;
+
+    thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if let Ok(mut output) = output_buffer.lock() {
+                        output.extend_from_slice(&buf[..n]);
+                        // Cap at ~1MB
+                        if output.len() > 1_048_576 {
+                            let drain_to = output.len() - 1_048_576;
+                            output.drain(..drain_to);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("PTY read error for {}: {}", block_id_owned, e);
+                    thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        }
+    });
+
     Ok(())
 }
 

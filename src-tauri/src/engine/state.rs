@@ -42,6 +42,11 @@ pub struct StateProjector {
     /// Maintained for `implement` relations only (the sole relation type).
     /// Updated on core.link, core.unlink, and core.delete events.
     pub parents: HashMap<String, Vec<String>>,
+
+    /// System owner editor ID — always authorized for all operations.
+    /// Loaded from `~/.elf/config.json` at engine startup.
+    /// TODO: Replace with user group mechanism (human ↔ agent group, group owner = admin)
+    pub system_editor_id: Option<String>,
 }
 
 impl StateProjector {
@@ -53,6 +58,7 @@ impl StateProjector {
             grants: GrantsTable::new(),
             editor_counts: HashMap::new(),
             parents: HashMap::new(),
+            system_editor_id: None,
         }
     }
 
@@ -498,16 +504,22 @@ impl StateProjector {
     /// 1. Block owner always has all permissions on their own block.
     /// 2. Otherwise, check the grants table for explicit authorization.
     pub fn is_authorized(&self, editor_id: &str, cap_id: &str, block_id: &str) -> bool {
-        // Special case: core.create and editor.create are usually handled at a higher level
-        // or have implicit permissions for any registered editor in this simple version.
-        // But for block-level capabilities:
+        // 0. System owner always authorized
+        // TODO: Replace with user group mechanism
+        if let Some(ref sys_id) = self.system_editor_id {
+            if editor_id == sys_id {
+                return true;
+            }
+        }
+
+        // 1. Block owner always authorized
         if let Some(block) = self.get_block(block_id) {
             if block.owner == editor_id {
                 return true;
             }
         }
 
-        // Check explicit grants
+        // 2. Check explicit grants
         self.grants.has_grant(editor_id, cap_id, block_id)
     }
 

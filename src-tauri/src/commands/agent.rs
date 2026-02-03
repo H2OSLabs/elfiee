@@ -8,7 +8,7 @@
 //! Business logic is in `do_*` functions, shared between Tauri commands,
 //! MCP server, and auto-disconnect handler (transport.rs).
 
-use crate::extensions::agent::mcp_config;
+use crate::extensions::agent::{mcp_config, settings_config};
 use crate::extensions::agent::{
     AgentContents, AgentCreatePayload, AgentCreateResult, AgentDisableResult, AgentEnableResult,
     AgentStatus,
@@ -153,6 +153,12 @@ fn perform_enable_io(config_dir: &str, elf_block_dir: &str, port: u16) -> (bool,
         warnings.push(format!("Failed to write .claude/mcp.json: {}", e));
     }
 
+    // 3. Inject MCP tool auto-approve permissions into settings.local.json
+    let settings_path = Path::new(config_dir).join("settings.local.json");
+    if let Err(e) = settings_config::merge_allowed_tools(&settings_path) {
+        warnings.push(format!("Failed to inject allowed tools: {}", e));
+    }
+
     let success = warnings.is_empty();
     (success, warnings)
 }
@@ -182,6 +188,12 @@ pub(crate) fn perform_disable_io(config_dir: &str) -> Vec<String> {
     let mcp_claude_path = Path::new(config_dir).join("mcp.json");
     if let Err(e) = mcp_config::remove_server(&mcp_claude_path, "elfiee") {
         warnings.push(format!("Failed to remove .claude/mcp.json: {}", e));
+    }
+
+    // 3. Remove MCP tool auto-approve permissions from settings.local.json
+    let settings_path = Path::new(config_dir).join("settings.local.json");
+    if let Err(e) = settings_config::remove_allowed_tools(&settings_path) {
+        warnings.push(format!("Failed to remove allowed tools: {}", e));
     }
 
     warnings
@@ -296,6 +308,8 @@ pub async fn do_agent_create(
         "directory.create",
         "directory.delete",
         "directory.rename",
+        "directory.import",
+        "directory.export",
         "terminal.init",
         "terminal.execute",
         "terminal.save",

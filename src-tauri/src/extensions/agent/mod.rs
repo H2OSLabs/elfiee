@@ -32,6 +32,7 @@ pub mod agent_create;
 pub mod agent_disable;
 pub mod agent_enable;
 pub mod mcp_config;
+pub mod settings_config;
 
 // Re-export capability handlers for registration
 pub use agent_create::*;

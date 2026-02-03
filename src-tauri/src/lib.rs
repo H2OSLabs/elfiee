@@ -3,6 +3,7 @@ pub mod commands;
 pub mod config;
 pub mod elf;
 pub mod engine;
+pub mod events;
 pub mod extensions;
 pub mod mcp;
 pub mod models;
@@ -12,20 +13,38 @@ pub mod utils;
 use state::AppState;
 use std::sync::Arc;
 use tauri::Manager;
+use tauri_specta::Event;
 
 #[cfg(debug_assertions)]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let app_state = AppState::new();
+    // TerminalState shares the same sessions Arc as AppState,
+    // so both Tauri commands and MCP server access the same terminal sessions.
+    let terminal_state = extensions::terminal::TerminalState {
+        sessions: app_state.terminal_sessions.clone(),
+    };
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState::new())
-        .manage(extensions::terminal::TerminalState::new())
+        .manage(app_state)
+        .manage(terminal_state)
         .setup(|app| {
-            // Start MCP Server (independent port, background task)
             let app_state: tauri::State<AppState> = app.state();
+
+            // Subscribe to state_changed broadcast and forward to frontend via typed Tauri events
+            let app_handle = app.handle().clone();
+            let mut state_rx = app_state.state_changed_tx.subscribe();
+            tauri::async_runtime::spawn(async move {
+                while let Ok(file_id) = state_rx.recv().await {
+                    let _ = events::StateChangedEvent { file_id }.emit(&app_handle);
+                }
+            });
+
+            // Start MCP Server (independent port, background task)
             let mcp_state = Arc::new((*app_state).clone());
 
             tauri::async_runtime::spawn(async move {
@@ -43,6 +62,10 @@ pub fn run() {
     #[cfg(debug_assertions)]
     let builder = {
         let specta_builder = tauri_specta::Builder::<tauri::Wry>::new()
+            .events(tauri_specta::collect_events![
+                events::StateChangedEvent,
+                events::PtyOutputEvent,
+            ])
             .commands(tauri_specta::collect_commands![
                 // File operations
                 commands::file::create_file,

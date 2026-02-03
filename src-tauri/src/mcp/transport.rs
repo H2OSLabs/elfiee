@@ -3,11 +3,13 @@
 //! Provides independent SSE servers for MCP protocol communication.
 //!
 //! **Management server** (port 47200): Legacy/fallback mode. Uses GUI active editor.
-//! When all SSE clients disconnect, enabled agents are auto-disabled.
 //!
 //! **Per-agent servers** (ports 47201–47299): Each enabled agent gets its own port.
 //! The agent's `editor_id` is used deterministically for all operations.
-//! When the agent's last SSE client disconnects, only that agent is auto-disabled.
+//!
+//! Servers stay running while agents are enabled. They do NOT auto-disable on
+//! SSE disconnect — this allows clients to reconnect without losing state.
+//! Servers are stopped only by explicit disable (GUI), file close, or app exit.
 
 use super::ElfieeMcpServer;
 use crate::extensions::agent::{AgentContents, AgentStatus};
@@ -88,10 +90,7 @@ pub async fn start_mcp_server(app_state: Arc<AppState>, port: u16) -> Result<(),
                     .fetch_sub(1, Ordering::SeqCst)
                     - 1;
                 println!("MCP: Client disconnected (active: {})", remaining);
-
-                if remaining == 0 {
-                    disable_all_agents(&app_state).await;
-                }
+                // Server stays running — no auto-disable on disconnect
             });
         }
     });
@@ -230,11 +229,7 @@ async fn try_start_agent_server(
                     "MCP Agent {}: Client disconnected (active: {})",
                     agent_id, remaining
                 );
-
-                // When last client disconnects, auto-disable only this agent
-                if remaining == 0 {
-                    disable_single_agent(&app_state, &agent_id).await;
-                }
+                // Server stays running — no auto-disable on disconnect
             });
         }
     });
@@ -289,6 +284,10 @@ pub async fn stop_agent_mcp_server(
 // ============================================================================
 
 /// Disable a single agent when its per-agent MCP server loses all SSE clients.
+///
+/// Currently unused: auto-disable on disconnect was removed.
+/// Kept for future use (e.g., explicit disable from GUI or timeout).
+#[allow(dead_code)]
 async fn disable_single_agent(app_state: &AppState, agent_block_id: &str) {
     println!(
         "MCP Agent {}: All clients disconnected — auto-disabling...",
@@ -335,7 +334,9 @@ async fn disable_single_agent(app_state: &AppState, agent_block_id: &str) {
 
 /// Disable all enabled agent blocks across all open files.
 ///
-/// Called when the management port's last SSE client disconnects.
+/// Currently unused: auto-disable on disconnect was removed.
+/// Kept for future use (e.g., app shutdown cleanup).
+#[allow(dead_code)]
 async fn disable_all_agents(app_state: &AppState) {
     println!("MCP: All management clients disconnected — disabling enabled agents...");
 

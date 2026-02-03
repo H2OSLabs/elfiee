@@ -152,6 +152,8 @@ pub struct DirectoryCreateInput {
     pub content: Option<String>,
     /// Block type for files: markdown, code
     pub block_type: Option<String>,
+    /// Optional: use an existing block ID instead of creating a new block
+    pub existing_block_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -408,6 +410,9 @@ impl ElfieeMcpServer {
 
         match handle.process_command(cmd).await {
             Ok(events) => {
+                // Notify frontend of state change
+                let _ = self.app_state.state_changed_tx.send(file_id.clone());
+
                 let mut result = json!({
                     "ok": true,
                     "capability": capability,
@@ -525,6 +530,70 @@ impl ElfieeMcpServer {
         summary["metadata"] = meta;
 
         summary
+    }
+
+    /// Capture terminal output with quiescence detection.
+    ///
+    /// Polls the output buffer until:
+    /// - Output has been received and no new data arrives for 1 second, OR
+    /// - No output at all after 5 seconds, OR
+    /// - Maximum timeout of 30 seconds reached
+    async fn capture_terminal_output(
+        buffers: &dashmap::DashMap<String, std::sync::Arc<std::sync::Mutex<Vec<u8>>>>,
+        block_id: &str,
+    ) -> String {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let quiescence = Duration::from_secs(1);
+        let no_output_timeout = Duration::from_secs(5);
+        let max_timeout = Duration::from_secs(30);
+
+        let mut last_len = 0usize;
+        let mut last_change = Instant::now();
+        let mut ever_had_output = false;
+
+        // Initial delay for shell to start processing
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let current_len = buffers
+                .get(block_id)
+                .map(|buf| buf.lock().unwrap().len())
+                .unwrap_or(0);
+
+            if current_len > last_len {
+                last_len = current_len;
+                last_change = Instant::now();
+                ever_had_output = true;
+            }
+
+            // Quiescence: output received but stopped arriving
+            if ever_had_output && last_change.elapsed() >= quiescence {
+                break;
+            }
+
+            // No output at all for too long
+            if !ever_had_output && start.elapsed() >= no_output_timeout {
+                break;
+            }
+
+            // Hard timeout
+            if start.elapsed() >= max_timeout {
+                break;
+            }
+        }
+
+        // Read the buffer content
+        buffers
+            .get(block_id)
+            .map(|buf| {
+                let data = buf.lock().unwrap();
+                String::from_utf8_lossy(&data).to_string()
+            })
+            .unwrap_or_default()
     }
 
     /// Provide actionable hints for common errors
@@ -737,7 +806,7 @@ impl ElfieeMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let payload = json!({
             "name": input.name,
-            "type": input.block_type
+            "block_type": input.block_type
         });
         self.execute_capability(&input.project, "core.create", input.parent_id, payload)
             .await
@@ -786,7 +855,7 @@ impl ElfieeMcpServer {
             "core.link",
             Some(input.parent_id),
             json!({
-                "child_id": input.child_id,
+                "target_id": input.child_id,
                 "relation": input.relation
             }),
         )
@@ -804,7 +873,7 @@ impl ElfieeMcpServer {
             "core.unlink",
             Some(input.parent_id),
             json!({
-                "child_id": input.child_id,
+                "target_id": input.child_id,
                 "relation": input.relation
             }),
         )
@@ -821,7 +890,7 @@ impl ElfieeMcpServer {
             &input.project,
             "core.change_type",
             Some(input.block_id),
-            json!({ "new_type": input.new_type }),
+            json!({ "block_type": input.new_type }),
         )
         .await
     }
@@ -1007,6 +1076,9 @@ impl ElfieeMcpServer {
         if let Some(block_type) = input.block_type {
             payload["block_type"] = json!(block_type);
         }
+        if let Some(existing_block_id) = input.existing_block_id {
+            payload["existing_block_id"] = json!(existing_block_id);
+        }
 
         self.execute_capability(
             &input.project,
@@ -1148,18 +1220,39 @@ impl ElfieeMcpServer {
         &self,
         Parameters(input): Parameters<TerminalInitInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut payload = json!({});
-        if let Some(shell) = input.shell {
-            payload["shell"] = json!(shell);
-        }
+        let file_id = self.get_file_id(&input.project)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
 
-        self.execute_capability(
-            &input.project,
-            "terminal.init",
-            Some(input.block_id),
-            payload,
+        let payload = json!({
+            "cols": 80,
+            "rows": 24,
+            "block_id": input.block_id,
+            "editor_id": editor_id,
+            "file_id": file_id,
+        });
+
+        // Record terminal.init event
+        let result = self
+            .execute_capability(
+                &input.project,
+                "terminal.init",
+                Some(input.block_id.clone()),
+                payload,
+            )
+            .await?;
+
+        // Actually start a PTY session (MCP mode — no frontend events)
+        crate::extensions::terminal::commands::start_pty_for_mcp(
+            &self.app_state.terminal_sessions,
+            &self.app_state.terminal_output_buffers,
+            &input.block_id,
+            80,
+            24,
+            None,
         )
-        .await
+        .map_err(|e| mcp::invalid_payload(format!("Failed to start PTY: {}", e)))?;
+
+        Ok(result)
     }
 
     /// Execute a command in a terminal block
@@ -1168,13 +1261,62 @@ impl ElfieeMcpServer {
         &self,
         Parameters(input): Parameters<TerminalExecuteInput>,
     ) -> Result<CallToolResult, McpError> {
-        self.execute_capability(
-            &input.project,
-            "terminal.execute",
-            Some(input.block_id),
-            json!({ "command": input.command }),
-        )
-        .await
+        // Record terminal.execute event (best effort — don't fail if this errors)
+        let _ = self
+            .execute_capability(
+                &input.project,
+                "terminal.execute",
+                Some(input.block_id.clone()),
+                json!({ "command": input.command }),
+            )
+            .await;
+
+        // Check if session exists
+        {
+            let sessions = self.app_state.terminal_sessions.lock().unwrap();
+            if !sessions.contains_key(&input.block_id) {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "error": "Terminal session not found",
+                        "hint": "Call elfiee_terminal_init first to start a terminal session.",
+                    }))
+                    .unwrap(),
+                )]));
+            }
+        }
+
+        // Clear output buffer before sending command
+        if let Some(buf) = self.app_state.terminal_output_buffers.get(&input.block_id) {
+            buf.lock().unwrap().clear();
+        }
+
+        // Write command + newline to PTY
+        {
+            let mut sessions = self.app_state.terminal_sessions.lock().unwrap();
+            if let Some(session) = sessions.get_mut(&input.block_id) {
+                crate::extensions::terminal::pty::write(
+                    &mut *session.writer,
+                    &format!("{}\n", input.command),
+                )
+                .map_err(|e| mcp::invalid_payload(format!("Failed to write to PTY: {}", e)))?;
+            }
+        }
+
+        // Capture output with quiescence detection
+        let output =
+            Self::capture_terminal_output(&self.app_state.terminal_output_buffers, &input.block_id)
+                .await;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "block_id": input.block_id,
+                "command": input.command,
+                "output": output,
+            }))
+            .unwrap(),
+        )]))
     }
 
     /// Save terminal session content
@@ -1187,7 +1329,7 @@ impl ElfieeMcpServer {
             &input.project,
             "terminal.save",
             Some(input.block_id),
-            json!({ "content": input.content }),
+            json!({ "saved_content": input.content, "saved_at": crate::utils::time::now_utc() }),
         )
         .await
     }
@@ -1222,10 +1364,11 @@ impl ElfieeMcpServer {
         self.execute_capability(
             &input.project,
             "core.grant",
-            Some(input.block_id),
+            Some(input.block_id.clone()),
             json!({
-                "editor_id": input.editor_id,
-                "cap_id": input.cap_id
+                "target_editor": input.editor_id,
+                "capability": input.cap_id,
+                "target_block": input.block_id
             }),
         )
         .await
@@ -1242,10 +1385,11 @@ impl ElfieeMcpServer {
         self.execute_capability(
             &input.project,
             "core.revoke",
-            Some(input.block_id),
+            Some(input.block_id.clone()),
             json!({
-                "editor_id": input.editor_id,
-                "cap_id": input.cap_id
+                "target_editor": input.editor_id,
+                "capability": input.cap_id,
+                "target_block": input.block_id
             }),
         )
         .await
@@ -1261,10 +1405,11 @@ impl ElfieeMcpServer {
         &self,
         Parameters(input): Parameters<EditorInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut payload = json!({ "editor_id": input.editor_id });
-        if let Some(name) = input.name {
-            payload["name"] = json!(name);
-        }
+        let name = input.name.unwrap_or_else(|| input.editor_id.clone());
+        let payload = json!({
+            "name": name,
+            "editor_id": input.editor_id,
+        });
 
         self.execute_capability(&input.project, "core.editor_create", None, payload)
             .await
@@ -1306,7 +1451,7 @@ impl ElfieeMcpServer {
             editor_id.clone(),
             "core.create".to_string(),
             String::new(),
-            json!({ "name": input.name, "type": "task" }),
+            json!({ "name": input.name, "block_type": "task" }),
         );
 
         let events = handle
@@ -1425,7 +1570,7 @@ impl ElfieeMcpServer {
             "core.link",
             Some(input.task_id),
             json!({
-                "child_id": input.block_id,
+                "target_id": input.block_id,
                 "relation": "implement"
             }),
         )

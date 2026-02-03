@@ -1030,6 +1030,14 @@ export const commands = {
 
 /** user-defined events **/
 
+export const events = __makeEvents__<{
+  ptyOutputEvent: PtyOutputEvent
+  stateChangedEvent: StateChangedEvent
+}>({
+  ptyOutputEvent: 'pty-output-event',
+  stateChangedEvent: 'state-changed-event',
+})
+
 /** user-defined constants **/
 
 /** user-defined types **/
@@ -1311,6 +1319,12 @@ export type DirectoryCreatePayload = {
   source: string
   content?: string | null
   block_type?: string | null
+  /**
+   * Optional: Link an existing block instead of creating a new one.
+   * When provided (and entry_type is "file"), skips core.create and
+   * registers the existing block_id in the directory index.
+   */
+  existing_block_id?: string | null
 }
 /**
  * Payload for DirectoryDelete
@@ -1499,6 +1513,23 @@ export type MarkdownWritePayload = {
   content: string
 }
 /**
+ * Emitted when PTY produces output (high-frequency, from reader thread).
+ *
+ * The frontend terminal (xterm.js) decodes the base64 data and writes it to the screen.
+ * Only emitted by GUI-initiated PTY sessions (not MCP-initiated sessions which
+ * only write to the output buffer).
+ */
+export type PtyOutputEvent = {
+  /**
+   * Base64 encoded output data
+   */
+  data: string
+  /**
+   * The terminal block ID
+   */
+  block_id: string
+}
+/**
  * Payload for core.revoke capability
  *
  * This payload is used to revoke a capability from an editor for a specific block.
@@ -1517,6 +1548,14 @@ export type RevokePayload = {
    */
   target_block?: string
 }
+/**
+ * Emitted when backend state changes (e.g., blocks modified via MCP or Tauri commands).
+ *
+ * The frontend auto-refreshes blocks, grants, and events for the affected file.
+ * Sent through the `state_changed_tx` broadcast channel by both Tauri commands
+ * and the MCP server after successful command processing.
+ */
+export type StateChangedEvent = { file_id: string }
 /**
  * Full state snapshot at a specific point in time.
  */

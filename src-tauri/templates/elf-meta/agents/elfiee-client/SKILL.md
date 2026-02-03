@@ -34,6 +34,22 @@ Elfiee exposes MCP tools and resources for interacting with `.elf` files. Two co
 - Permissions are enforced through **CBAC** (Capability-Based Access Control) — only MCP tools check authorization
 - Block snapshots (physical files) are **derived data** regenerated from events — editing them directly has no lasting effect
 
+## MCP Connection Failure Protocol
+
+If any `elfiee_*` MCP tool returns a connection error, timeout, or "server unavailable":
+
+1. **STOP** all Elfiee-related operations immediately
+2. **DO NOT** fall back to filesystem tools (Read, Write, Edit, Bash) to modify block content
+3. **DO NOT** try to read or modify files in `.claude/`, `.elf/`, or any path that corresponds to .elf block directories
+4. **REPORT** the connection failure to the human user
+5. **WAIT** for human confirmation before taking any further action
+
+### Why this matters:
+
+- When Elfiee GUI is running, it holds the event store lock
+- Direct filesystem modifications bypass event sourcing and WILL be overwritten
+- The human user can check if Elfiee needs to be restarted or the agent re-enabled
+
 ### The only exception:
 
 - `elfiee_directory_export` explicitly exports block content to the filesystem for external use (e.g., git commit). Files created by export ARE normal filesystem files and can be read/edited normally after export.

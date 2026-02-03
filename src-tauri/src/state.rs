@@ -1,9 +1,12 @@
 use crate::elf::ElfArchive;
 use crate::engine::EngineManager;
+use crate::extensions::terminal::TerminalSession;
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU16, AtomicUsize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 /// Information about an open file
@@ -55,6 +58,20 @@ pub struct AppState {
 
     /// Next port to allocate for agent MCP servers (starts at 47201)
     pub next_agent_port: Arc<AtomicU16>,
+
+    /// Shared terminal sessions for both Tauri commands and MCP server.
+    /// This is the same Arc as TerminalState.sessions — both share one map.
+    pub terminal_sessions: Arc<Mutex<HashMap<String, TerminalSession>>>,
+
+    /// Output buffers for terminal sessions, keyed by block_id.
+    /// Used by MCP terminal_execute to capture command output.
+    /// The reader thread appends PTY output here; MCP polls and reads it.
+    pub terminal_output_buffers: Arc<DashMap<String, Arc<Mutex<Vec<u8>>>>>,
+
+    /// Broadcast sender for state change notifications.
+    /// Both Tauri commands and MCP server send file_id here after successful commands.
+    /// The Tauri app subscribes and emits `state_changed` events to the frontend.
+    pub state_changed_tx: broadcast::Sender<String>,
 }
 
 impl AppState {
@@ -67,6 +84,9 @@ impl AppState {
             sse_connection_count: Arc::new(AtomicUsize::new(0)),
             agent_servers: Arc::new(DashMap::new()),
             next_agent_port: Arc::new(AtomicU16::new(47201)),
+            terminal_sessions: Arc::new(Mutex::new(HashMap::new())),
+            terminal_output_buffers: Arc::new(DashMap::new()),
+            state_changed_tx: broadcast::channel(256).0,
         }
     }
 

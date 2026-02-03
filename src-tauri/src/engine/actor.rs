@@ -264,6 +264,9 @@ impl ElfileEngineActor {
         let registry = CapabilityRegistry::new();
         let mut state = StateProjector::new();
 
+        // Inject system owner editor ID for global authorization bypass
+        state.system_editor_id = crate::config::get_system_editor_id().ok();
+
         // Replay all events from database to rebuild state
         let events = EventStore::get_all_events(&event_pool_with_path.pool)
             .await
