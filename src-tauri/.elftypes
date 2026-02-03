@@ -5,60 +5,59 @@
 #
 # Format:
 #   [block_type]
-#   ext1
-#   ext2
+#   .ext1
+#   .ext2
 #
-# Location at runtime: ~/.elf/.elftypes
 # Edit this file to customize the defaults for your environment.
 
 [markdown]
-md
-markdown
+.md
+.markdown
 
 [code]
 # Rust
-rs
+.rs
 # Python
-py
+.py
 # JavaScript / TypeScript
-js
-ts
-jsx
-tsx
+.js
+.ts
+.jsx
+.tsx
 # C / C++
-c
-cpp
-h
-hpp
+.c
+.cpp
+.h
+.hpp
 # JVM
-java
-kt
-scala
+.java
+.kt
+.scala
 # Other languages
-go
-rb
-php
-swift
-cs
+.go
+.rb
+.php
+.swift
+.cs
 # Data / Config
-json
-toml
-yaml
-yml
-xml
-ini
-conf
+.json
+.toml
+.yaml
+.yml
+.xml
+.ini
+.conf
 # Shell
-sh
-bash
-zsh
-fish
+.sh
+.bash
+.zsh
+.fish
 # Web
-html
-htm
-css
-scss
-sass
-less
+.html
+.htm
+.css
+.scss
+.sass
+.less
 # Database
-sql
+.sql

@@ -47,13 +47,16 @@ fn load_elftypes() -> HashMap<String, String> {
 /// Format:
 /// ```text
 /// [markdown]
-/// md
-/// markdown
+/// .md
+/// .markdown
 ///
 /// [code]
-/// rs
-/// py
+/// .rs
+/// .py
 /// ```
+///
+/// Leading dots are stripped so that keys match the output of
+/// `Path::extension()` (which returns extensions without the dot).
 fn parse_elftypes(content: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let mut current_type: Option<String> = None;
@@ -66,7 +69,8 @@ fn parse_elftypes(content: &str) -> HashMap<String, String> {
         if line.starts_with('[') && line.ends_with(']') {
             current_type = Some(line[1..line.len() - 1].trim().to_string());
         } else if let Some(ref block_type) = current_type {
-            map.insert(line.to_lowercase(), block_type.clone());
+            let ext = line.strip_prefix('.').unwrap_or(line);
+            map.insert(ext.to_lowercase(), block_type.clone());
         }
     }
     map
@@ -101,14 +105,14 @@ mod tests {
         let content = r#"
 # comment
 [markdown]
-md
-markdown
+.md
+.markdown
 
 [code]
-rs
-py
+.rs
+.py
 # inline comment
-js
+.js
 "#;
         let map = parse_elftypes(content);
         assert_eq!(map.get("md").unwrap(), "markdown");
@@ -121,7 +125,7 @@ js
 
     #[test]
     fn test_parse_elftypes_case_insensitive() {
-        let content = "[markdown]\nMD\n";
+        let content = "[markdown]\n.MD\n";
         let map = parse_elftypes(content);
         assert_eq!(map.get("md").unwrap(), "markdown");
     }
@@ -161,7 +165,7 @@ js
     fn test_load_elftypes_custom_file() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join(".elftypes");
-        fs::write(&path, "[diagram]\nmermaid\ndot\n").unwrap();
+        fs::write(&path, "[diagram]\n.mermaid\n.dot\n").unwrap();
 
         std::env::set_var("ELF_TEST_ELFTYPES_PATH", &path);
         let map = load_elftypes();
