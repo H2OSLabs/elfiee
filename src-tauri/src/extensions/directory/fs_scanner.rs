@@ -45,7 +45,7 @@ pub struct ScanOptions {
 }
 
 /// Content of `.elfignore`, bundled at compile time.
-const DEFAULT_ELFIGNORE: &str = include_str!("../../.elfignore");
+const DEFAULT_ELFIGNORE: &str = include_str!("../../../.elfignore");
 
 /// Parse `.elfignore` content into a list of patterns.
 /// Strips comments, empty lines, and trailing slashes.

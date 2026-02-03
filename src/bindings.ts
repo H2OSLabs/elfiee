@@ -3,828 +3,1263 @@
 
 /** user-defined commands **/
 
-
 export const commands = {
-/**
- * Create a new .elf file and open it for editing.
- * 
- * # Arguments
- * * `path` - Absolute path where the new .elf file should be created
- * 
- * # Returns
- * * `Ok(file_id)` - Unique identifier for the opened file
- * * `Err(message)` - Error description if creation fails
- */
-async createFile(path: string) : Promise<Result<string, string>> {
+  /**
+   * Create a new .elf file and open it for editing.
+   *
+   * # Arguments
+   * * `path` - Absolute path where the new .elf file should be created
+   *
+   * # Returns
+   * * `Ok(file_id)` - Unique identifier for the opened file
+   * * `Err(message)` - Error description if creation fails
+   */
+  async createFile(path: string): Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_file", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Open an existing .elf file for editing.
- * 
- * # Arguments
- * * `path` - Absolute path to the .elf file to open
- * 
- * # Returns
- * * `Ok(file_id)` - Unique identifier for the opened file
- * * `Err(message)` - Error description if opening fails
- */
-async openFile(path: string) : Promise<Result<string, string>> {
+      return { status: 'ok', data: await TAURI_INVOKE('create_file', { path }) }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Open an existing .elf file for editing.
+   *
+   * # Arguments
+   * * `path` - Absolute path to the .elf file to open
+   *
+   * # Returns
+   * * `Ok(file_id)` - Unique identifier for the opened file
+   * * `Err(message)` - Error description if opening fails
+   */
+  async openFile(path: string): Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("open_file", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Save the current state of a file to disk.
- * 
- * This persists all changes made since the file was opened or last saved.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file to save
- * 
- * # Returns
- * * `Ok(())` - File saved successfully
- * * `Err(message)` - Error description if save fails
- */
-async saveFile(fileId: string) : Promise<Result<null, string>> {
+      return { status: 'ok', data: await TAURI_INVOKE('open_file', { path }) }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Save the current state of a file to disk.
+   *
+   * This persists all changes made since the file was opened or last saved.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file to save
+   *
+   * # Returns
+   * * `Ok(())` - File saved successfully
+   * * `Err(message)` - Error description if save fails
+   */
+  async saveFile(fileId: string): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("save_file", { fileId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Close a file and release associated resources.
- * 
- * This shuts down the engine actor and removes the file from memory.
- * Unsaved changes will be lost.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file to close
- * 
- * # Returns
- * * `Ok(())` - File closed successfully
- * * `Err(message)` - Error description if close fails
- */
-async closeFile(fileId: string) : Promise<Result<null, string>> {
+      return { status: 'ok', data: await TAURI_INVOKE('save_file', { fileId }) }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Close a file and release associated resources.
+   *
+   * This shuts down the engine actor and removes the file from memory.
+   * Unsaved changes will be lost.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file to close
+   *
+   * # Returns
+   * * `Ok(())` - File closed successfully
+   * * `Err(message)` - Error description if close fails
+   */
+  async closeFile(fileId: string): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("close_file", { fileId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get list of all currently open files.
- * 
- * # Returns
- * * `Ok(Vec<file_id>)` - List of file IDs currently open
- * * `Err(message)` - Error description if retrieval fails
- */
-async listOpenFiles() : Promise<Result<string[], string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('close_file', { fileId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get list of all currently open files.
+   *
+   * # Returns
+   * * `Ok(Vec<file_id>)` - List of file IDs currently open
+   * * `Err(message)` - Error description if retrieval fails
+   */
+  async listOpenFiles(): Promise<Result<string[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_open_files") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get all events for a specific file.
- * 
- * This command filters events based on permissions:
- * - Block events: Only returns events for blocks where user has core.read permission
- * - Editor events: Always returned (file-level information, similar to Git collaborators)
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `editor_id` - Optional editor ID (defaults to active editor)
- * 
- * # Returns
- * * `Ok(Vec<Event>)` - List of events the user has permission to view
- * * `Err(message)` - Error description if retrieval fails
- */
-async getAllEvents(fileId: string, editorId: string | null) : Promise<Result<Event[], string>> {
+      return { status: 'ok', data: await TAURI_INVOKE('list_open_files') }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get all events for a specific file.
+   *
+   * This command filters events based on permissions:
+   * - Block events: Only returns events for blocks where user has core.read permission
+   * - Editor events: Always returned (file-level information, similar to Git collaborators)
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `editor_id` - Optional editor ID (defaults to active editor)
+   *
+   * # Returns
+   * * `Ok(Vec<Event>)` - List of events the user has permission to view
+   * * `Err(message)` - Error description if retrieval fails
+   */
+  async getAllEvents(
+    fileId: string,
+    editorId: string | null
+  ): Promise<Result<Event[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_all_events", { fileId, editorId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get detailed information about a file.
- * 
- * Returns metadata including file name, path, collaborators (editors),
- * and timestamps. The file must be open to retrieve this information.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * 
- * # Returns
- * * `Ok(FileMetadata)` - File metadata
- * * `Err(message)` - Error description if retrieval fails
- */
-async getFileInfo(fileId: string) : Promise<Result<FileMetadata, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('get_all_events', { fileId, editorId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get detailed information about a file.
+   *
+   * Returns metadata including file name, path, collaborators (editors),
+   * and timestamps. The file must be open to retrieve this information.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   *
+   * # Returns
+   * * `Ok(FileMetadata)` - File metadata
+   * * `Err(message)` - Error description if retrieval fails
+   */
+  async getFileInfo(fileId: string): Promise<Result<FileMetadata, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_file_info", { fileId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Rename a file on the filesystem.
- * 
- * This updates the file path both in the filesystem and in the application state.
- * The file must be open to be renamed.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `new_name` - New name for the file (without extension)
- * 
- * # Returns
- * * `Ok(())` - File renamed successfully
- * * `Err(message)` - Error description if rename fails
- */
-async renameFile(fileId: string, newName: string) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('get_file_info', { fileId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Rename a file on the filesystem.
+   *
+   * This updates the file path both in the filesystem and in the application state.
+   * The file must be open to be renamed.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `new_name` - New name for the file (without extension)
+   *
+   * # Returns
+   * * `Ok(())` - File renamed successfully
+   * * `Err(message)` - Error description if rename fails
+   */
+  async renameFile(
+    fileId: string,
+    newName: string
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("rename_file", { fileId, newName }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Duplicate (copy) an existing .elf file.
- * 
- * This creates a copy of the file with a new name and opens it for editing.
- * The new file will have " Copy" appended to the name, or " Copy N" if that name exists.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file to duplicate
- * 
- * # Returns
- * * `Ok(new_file_id)` - Unique identifier for the newly created duplicate file
- * * `Err(message)` - Error description if duplication fails
- */
-async duplicateFile(fileId: string) : Promise<Result<string, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('rename_file', { fileId, newName }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Duplicate (copy) an existing .elf file.
+   *
+   * This creates a copy of the file with a new name and opens it for editing.
+   * The new file will have " Copy" appended to the name, or " Copy N" if that name exists.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file to duplicate
+   *
+   * # Returns
+   * * `Ok(new_file_id)` - Unique identifier for the newly created duplicate file
+   * * `Err(message)` - Error description if duplication fails
+   */
+  async duplicateFile(fileId: string): Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("duplicate_file", { fileId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get the global system editor ID from config.
- * 
- * This returns the persistent system editor ID that is stored in
- * the user's home directory config file (`$USER_HOME/.elf/config.json`).
- * 
- * # Returns
- * * `Ok(String)` - The system editor ID (UUID)
- * * `Err(message)` - Error if config cannot be read
- */
-async getSystemEditorIdFromConfig() : Promise<Result<string, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('duplicate_file', { fileId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get the global system editor ID from config.
+   *
+   * This returns the persistent system editor ID that is stored in
+   * the user's home directory config file (`$USER_HOME/.elf/config.json`).
+   *
+   * # Returns
+   * * `Ok(String)` - The system editor ID (UUID)
+   * * `Err(message)` - Error if config cannot be read
+   */
+  async getSystemEditorIdFromConfig(): Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_system_editor_id_from_config") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get the full state snapshot (block + grants) at a specific event.
- */
-async getStateAtEvent(fileId: string, blockId: string, eventId: string) : Promise<Result<StateSnapshot, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('get_system_editor_id_from_config'),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get the full state snapshot (block + grants) at a specific event.
+   */
+  async getStateAtEvent(
+    fileId: string,
+    blockId: string,
+    eventId: string
+  ): Promise<Result<StateSnapshot, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_state_at_event", { fileId, blockId, eventId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Execute a command on a block in the specified file.
- * 
- * This is the primary way to modify blocks. Commands are processed by the engine actor,
- * which handles authorization, execution, and persistence.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file containing the block
- * * `cmd` - Command to execute (create, delete, link, write, etc.)
- * 
- * # Returns
- * * `Ok(events)` - Events generated by the command execution
- * * `Err(message)` - Error description if execution fails
- */
-async executeCommand(fileId: string, cmd: Command) : Promise<Result<Event[], string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('get_state_at_event', {
+          fileId,
+          blockId,
+          eventId,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Execute a command on a block in the specified file.
+   *
+   * This is the primary way to modify blocks. Commands are processed by the engine actor,
+   * which handles authorization, execution, and persistence.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file containing the block
+   * * `cmd` - Command to execute (create, delete, link, write, etc.)
+   *
+   * # Returns
+   * * `Ok(events)` - Events generated by the command execution
+   * * `Err(message)` - Error description if execution fails
+   */
+  async executeCommand(
+    fileId: string,
+    cmd: Command
+  ): Promise<Result<Event[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("execute_command", { fileId, cmd }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get a specific block by ID from a file.
- * 
- * This command checks read permission before returning the block content.
- * The permission check uses the capability system (CBAC):
- * - markdown blocks require `markdown.read` permission
- * - code blocks require `code.read` permission
- * - directory blocks require `directory.read` permission
- * 
- * Block owners always have read permission.
- * Other editors need explicit grants in the grants table.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file containing the block
- * * `block_id` - Unique identifier of the block to retrieve
- * * `editor_id` - Optional editor ID (defaults to active editor)
- * 
- * # Returns
- * * `Ok(block)` - The requested block (if authorized)
- * * `Err(message)` - Error if file not open, block not found, or no read permission
- */
-async getBlock(fileId: string, blockId: string, editorId: string | null) : Promise<Result<Block, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('execute_command', { fileId, cmd }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get a specific block by ID from a file.
+   *
+   * This command checks read permission before returning the block content.
+   * The permission check uses the capability system (CBAC):
+   * - markdown blocks require `markdown.read` permission
+   * - code blocks require `code.read` permission
+   * - directory blocks require `directory.read` permission
+   *
+   * Block owners always have read permission.
+   * Other editors need explicit grants in the grants table.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file containing the block
+   * * `block_id` - Unique identifier of the block to retrieve
+   * * `editor_id` - Optional editor ID (defaults to active editor)
+   *
+   * # Returns
+   * * `Ok(block)` - The requested block (if authorized)
+   * * `Err(message)` - Error if file not open, block not found, or no read permission
+   */
+  async getBlock(
+    fileId: string,
+    blockId: string,
+    editorId: string | null
+  ): Promise<Result<Block, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_block", { fileId, blockId, editorId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get all blocks from a file.
- * 
- * This command filters blocks based on permissions:
- * - Only returns blocks where the user is owner OR has core.read OR has any other permission
- * - For directory blocks with directory.read permission, returns full contents
- * - For directory blocks without directory.read but with other permissions, returns empty entries
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `editor_id` - Optional editor ID (defaults to active editor)
- * 
- * # Returns
- * * `Ok(blocks)` - Vector of blocks the user has permission to view
- * * `Err(message)` - Error if file is not open
- */
-async getAllBlocks(fileId: string, editorId: string | null) : Promise<Result<Block[], string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('get_block', { fileId, blockId, editorId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get all blocks from a file.
+   *
+   * This command filters blocks based on permissions:
+   * - Only returns blocks where the user is owner OR has core.read OR has any other permission
+   * - For directory blocks with directory.read permission, returns full contents
+   * - For directory blocks without directory.read but with other permissions, returns empty entries
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `editor_id` - Optional editor ID (defaults to active editor)
+   *
+   * # Returns
+   * * `Ok(blocks)` - Vector of blocks the user has permission to view
+   * * `Err(message)` - Error if file is not open
+   */
+  async getAllBlocks(
+    fileId: string,
+    editorId: string | null
+  ): Promise<Result<Block[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_all_blocks", { fileId, editorId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Update block metadata.
- * 
- * This generates a Command with core.update_metadata capability and processes it through
- * the engine actor. The metadata is merged with existing metadata and updated via event replay.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file containing the block
- * * `block_id` - Unique identifier of the block to update
- * * `metadata` - Metadata fields to update (will be merged with existing metadata)
- * 
- * # Returns
- * * `Ok(())` - Metadata updated successfully
- * * `Err(message)` - Error description if update fails
- */
-async updateBlockMetadata(fileId: string, blockId: string, metadata: JsonValue) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('get_all_blocks', { fileId, editorId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Update block metadata.
+   *
+   * This generates a Command with core.update_metadata capability and processes it through
+   * the engine actor. The metadata is merged with existing metadata and updated via event replay.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file containing the block
+   * * `block_id` - Unique identifier of the block to update
+   * * `metadata` - Metadata fields to update (will be merged with existing metadata)
+   *
+   * # Returns
+   * * `Ok(())` - Metadata updated successfully
+   * * `Err(message)` - Error description if update fails
+   */
+  async updateBlockMetadata(
+    fileId: string,
+    blockId: string,
+    metadata: JsonValue
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("update_block_metadata", { fileId, blockId, metadata }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Rename a block.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `block_id` - Unique identifier of the block
- * * `name` - New name for the block
- */
-async renameBlock(fileId: string, blockId: string, name: string) : Promise<Result<Event[], string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('update_block_metadata', {
+          fileId,
+          blockId,
+          metadata,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Rename a block.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `block_id` - Unique identifier of the block
+   * * `name` - New name for the block
+   */
+  async renameBlock(
+    fileId: string,
+    blockId: string,
+    name: string
+  ): Promise<Result<Event[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("rename_block", { fileId, blockId, name }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Change the type of a block.
- * 
- * This command provides smart type changing with automatic inference from file extensions.
- * It wraps the core.change_type capability with additional convenience features.
- * 
- * # Type Inference Logic
- * 1. If `block_type` is provided, use it directly
- * 2. If `file_extension` is provided, use `infer_block_type()` to determine type
- * 3. If both are provided, `block_type` takes precedence
- * 4. If neither is provided, returns an error
- * 
- * # Use Cases
- * - User explicitly selects new type via UI: pass `block_type`
- * - After file rename with extension change: pass `file_extension` for auto-inference
- * - Direct type conversion: pass `block_type` with exact type string
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `block_id` - Unique identifier of the block
- * * `block_type` - Optional: directly specify the new block type
- * * `file_extension` - Optional: file extension to infer type from (e.g., "md", "rs", "txt")
- * 
- * # Returns
- * * `Ok(events)` - Events generated by the type change
- * * `Err(message)` - Error if inference fails or parameters are invalid
- * 
- * # Examples
- * 
- * Direct type specification:
- * ```rust,no_run
- * use tauri::State;
- * use elfiee_lib::state::AppState;
- * use elfiee_lib::commands::block::change_block_type;
- * 
- * # async fn wrapper(state: State<'_, AppState>) -> Result<(), String> {
- * change_block_type(
- * "file_123".to_string(),
- * "block_456".to_string(),
- * Some("markdown".to_string()),
- * None,
- * state
- * ).await?;
- * # Ok(())
- * # }
- * ```
- * 
- * Infer type from extension:
- * ```rust,no_run
- * use tauri::State;
- * use elfiee_lib::state::AppState;
- * use elfiee_lib::commands::block::change_block_type;
- * 
- * # async fn wrapper(state: State<'_, AppState>) -> Result<(), String> {
- * change_block_type(
- * "file_123".to_string(),
- * "block_456".to_string(),
- * None,
- * Some("md".to_string()),
- * state
- * ).await?;
- * # Ok(())
- * # }
- * ```
- */
-async changeBlockType(fileId: string, blockId: string, blockType: string | null, fileExtension: string | null) : Promise<Result<Event[], string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('rename_block', { fileId, blockId, name }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Change the type of a block.
+   *
+   * This command provides smart type changing with automatic inference from file extensions.
+   * It wraps the core.change_type capability with additional convenience features.
+   *
+   * # Type Inference Logic
+   * 1. If `block_type` is provided, use it directly
+   * 2. If `file_extension` is provided, use `infer_block_type()` to determine type
+   * 3. If both are provided, `block_type` takes precedence
+   * 4. If neither is provided, returns an error
+   *
+   * # Use Cases
+   * - User explicitly selects new type via UI: pass `block_type`
+   * - After file rename with extension change: pass `file_extension` for auto-inference
+   * - Direct type conversion: pass `block_type` with exact type string
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `block_id` - Unique identifier of the block
+   * * `block_type` - Optional: directly specify the new block type
+   * * `file_extension` - Optional: file extension to infer type from (e.g., "md", "rs", "txt")
+   *
+   * # Returns
+   * * `Ok(events)` - Events generated by the type change
+   * * `Err(message)` - Error if inference fails or parameters are invalid
+   *
+   * # Examples
+   *
+   * Direct type specification:
+   * ```rust,no_run
+   * use tauri::State;
+   * use elfiee_lib::state::AppState;
+   * use elfiee_lib::commands::block::change_block_type;
+   *
+   * # async fn wrapper(state: State<'_, AppState>) -> Result<(), String> {
+   * change_block_type(
+   * "file_123".to_string(),
+   * "block_456".to_string(),
+   * Some("markdown".to_string()),
+   * None,
+   * state
+   * ).await?;
+   * # Ok(())
+   * # }
+   * ```
+   *
+   * Infer type from extension:
+   * ```rust,no_run
+   * use tauri::State;
+   * use elfiee_lib::state::AppState;
+   * use elfiee_lib::commands::block::change_block_type;
+   *
+   * # async fn wrapper(state: State<'_, AppState>) -> Result<(), String> {
+   * change_block_type(
+   * "file_123".to_string(),
+   * "block_456".to_string(),
+   * None,
+   * Some("md".to_string()),
+   * state
+   * ).await?;
+   * # Ok(())
+   * # }
+   * ```
+   */
+  async changeBlockType(
+    fileId: string,
+    blockId: string,
+    blockType: string | null,
+    fileExtension: string | null
+  ): Promise<Result<Event[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_block_type", { fileId, blockId, blockType, fileExtension }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Check if current editor has permission for a capability on a block.
- */
-async checkPermission(fileId: string, blockId: string, capability: string, editorId: string | null) : Promise<Result<boolean, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('change_block_type', {
+          fileId,
+          blockId,
+          blockType,
+          fileExtension,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Check if current editor has permission for a capability on a block.
+   */
+  async checkPermission(
+    fileId: string,
+    blockId: string,
+    capability: string,
+    editorId: string | null
+  ): Promise<Result<boolean, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("check_permission", { fileId, blockId, capability, editorId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Create a new editor for the specified file.
- * 
- * This generates a Command with editor.create capability and processes it through
- * the engine actor. The new editor is added to the file's state via event replay.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `name` - Display name for the new editor
- * * `editor_type` - Optional editor type (Human or Bot)
- * * `block_id` - Optional block ID. If provided, only the block owner can create editors.
- * 
- * # Returns
- * * `Ok(Editor)` - The newly created editor
- * * `Err(message)` - Error description if creation fails
- */
-async createEditor(fileId: string, name: string, editorType: string | null, blockId: string | null) : Promise<Result<Editor, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('check_permission', {
+          fileId,
+          blockId,
+          capability,
+          editorId,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Create a new editor for the specified file.
+   *
+   * This generates a Command with editor.create capability and processes it through
+   * the engine actor. The new editor is added to the file's state via event replay.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `name` - Display name for the new editor
+   * * `editor_type` - Optional editor type (Human or Bot)
+   * * `block_id` - Optional block ID. If provided, only the block owner can create editors.
+   *
+   * # Returns
+   * * `Ok(Editor)` - The newly created editor
+   * * `Err(message)` - Error description if creation fails
+   */
+  async createEditor(
+    fileId: string,
+    name: string,
+    editorType: string | null,
+    blockId: string | null
+  ): Promise<Result<Editor, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("create_editor", { fileId, name, editorType, blockId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Delete an editor identity from the specified file.
- * 
- * This generates a Command with editor.delete capability and processes it through
- * the engine actor. The editor and associated grants are removed from the state.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `editor_id` - Unique identifier of the editor to delete
- * * `block_id` - Optional block ID. If provided, only the block owner can delete editors.
- * 
- * # Returns
- * * `Ok(())` - Success
- * * `Err(message)` - Error description if deletion fails
- */
-async deleteEditor(fileId: string, editorId: string, blockId: string | null) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('create_editor', {
+          fileId,
+          name,
+          editorType,
+          blockId,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Delete an editor identity from the specified file.
+   *
+   * This generates a Command with editor.delete capability and processes it through
+   * the engine actor. The editor and associated grants are removed from the state.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `editor_id` - Unique identifier of the editor to delete
+   * * `block_id` - Optional block ID. If provided, only the block owner can delete editors.
+   *
+   * # Returns
+   * * `Ok(())` - Success
+   * * `Err(message)` - Error description if deletion fails
+   */
+  async deleteEditor(
+    fileId: string,
+    editorId: string,
+    blockId: string | null
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_editor", { fileId, editorId, blockId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * List all editors for the specified file.
- * 
- * Reads the editors from the StateProjector which is built from event replay.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * 
- * # Returns
- * * `Ok(Vec<Editor>)` - List of all editors
- * * `Err(message)` - Error if file is not open
- */
-async listEditors(fileId: string) : Promise<Result<Editor[], string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('delete_editor', {
+          fileId,
+          editorId,
+          blockId,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * List all editors for the specified file.
+   *
+   * Reads the editors from the StateProjector which is built from event replay.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   *
+   * # Returns
+   * * `Ok(Vec<Editor>)` - List of all editors
+   * * `Err(message)` - Error if file is not open
+   */
+  async listEditors(fileId: string): Promise<Result<Editor[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_editors", { fileId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get a specific editor by ID.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `editor_id` - Unique identifier of the editor
- * 
- * # Returns
- * * `Ok(Editor)` - The requested editor
- * * `Err(message)` - Error if file not open or editor not found
- */
-async getEditor(fileId: string, editorId: string) : Promise<Result<Editor, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('list_editors', { fileId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get a specific editor by ID.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `editor_id` - Unique identifier of the editor
+   *
+   * # Returns
+   * * `Ok(Editor)` - The requested editor
+   * * `Err(message)` - Error if file not open or editor not found
+   */
+  async getEditor(
+    fileId: string,
+    editorId: string
+  ): Promise<Result<Editor, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_editor", { fileId, editorId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Set the active editor for the specified file.
- * 
- * This is a UI state operation and is not persisted to the .elf file.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `editor_id` - Unique identifier of the editor to set as active
- * 
- * # Returns
- * * `Ok(())` - Success
- * * `Err(message)` - Error if file or editor not found
- */
-async setActiveEditor(fileId: string, editorId: string) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('get_editor', { fileId, editorId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Set the active editor for the specified file.
+   *
+   * This is a UI state operation and is not persisted to the .elf file.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `editor_id` - Unique identifier of the editor to set as active
+   *
+   * # Returns
+   * * `Ok(())` - Success
+   * * `Err(message)` - Error if file or editor not found
+   */
+  async setActiveEditor(
+    fileId: string,
+    editorId: string
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("set_active_editor", { fileId, editorId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get the currently active editor for the specified file.
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * 
- * # Returns
- * * `Ok(Option<String>)` - Editor ID if one is active, None otherwise
- * * `Err(message)` - Error if file is not open
- */
-async getActiveEditor(fileId: string) : Promise<Result<string | null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('set_active_editor', { fileId, editorId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get the currently active editor for the specified file.
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   *
+   * # Returns
+   * * `Ok(Option<String>)` - Editor ID if one is active, None otherwise
+   * * `Err(message)` - Error if file is not open
+   */
+  async getActiveEditor(
+    fileId: string
+  ): Promise<Result<string | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_active_editor", { fileId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * List all grants for the specified file.
- * 
- * This command filters grants based on permissions:
- * - Only returns grants for blocks where the user has core.read permission
- * - Wildcard grants (*) are always included as they are file-level
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `editor_id` - Optional editor ID (defaults to active editor)
- * 
- * # Returns
- * * `Ok(Vec<Grant>)` - List of grants the user has permission to view
- * * `Err(message)` - Error if file is not open
- */
-async listGrants(fileId: string, editorId: string | null) : Promise<Result<Grant[], string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('get_active_editor', { fileId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * List all grants for the specified file.
+   *
+   * This command filters grants based on permissions:
+   * - Only returns grants for blocks where the user has core.read permission
+   * - Wildcard grants (*) are always included as they are file-level
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `editor_id` - Optional editor ID (defaults to active editor)
+   *
+   * # Returns
+   * * `Ok(Vec<Grant>)` - List of grants the user has permission to view
+   * * `Err(message)` - Error if file is not open
+   */
+  async listGrants(
+    fileId: string,
+    editorId: string | null
+  ): Promise<Result<Grant[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_grants", { fileId, editorId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get grants for a specific block.
- * 
- * Returns all grants that apply to this block (including wildcard grants).
- * 
- * # Arguments
- * * `file_id` - Unique identifier of the file
- * * `block_id` - Unique identifier of the block
- * 
- * # Returns
- * * `Ok(Vec<Grant>)` - List of grants for the block
- * * `Err(message)` - Error if file is not open
- */
-async getBlockGrants(fileId: string, blockId: string) : Promise<Result<Grant[], string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('list_grants', { fileId, editorId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Get grants for a specific block.
+   *
+   * Returns all grants that apply to this block (including wildcard grants).
+   *
+   * # Arguments
+   * * `file_id` - Unique identifier of the file
+   * * `block_id` - Unique identifier of the block
+   *
+   * # Returns
+   * * `Ok(Vec<Grant>)` - List of grants for the block
+   * * `Err(message)` - Error if file is not open
+   */
+  async getBlockGrants(
+    fileId: string,
+    blockId: string
+  ): Promise<Result<Grant[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_block_grants", { fileId, blockId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Materialize blocks to the external file system (Checkout).
- * 
- * This command implements the bottom-layer I/O ability:
- * 1. Calls the `directory.export` capability for authorization and auditing.
- * 2. If authorized, performs the 'checkout' by writing block contents to the target path.
- */
-async checkoutWorkspace(fileId: string, blockId: string, payload: DirectoryExportPayload) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('get_block_grants', { fileId, blockId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Materialize blocks to the external file system (Checkout).
+   */
+  async checkoutWorkspace(
+    fileId: string,
+    blockId: string,
+    payload: DirectoryExportPayload
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("checkout_workspace", { fileId, blockId, payload }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Execute a task commit: validate → auto-discover repo → export snapshots → git commit.
- * 
- * This command follows the Split Pattern:
- * 1. Calls task.commit capability handler (authorization + audit event)
- * 2. Auto-discovers linked repo from downstream blocks
- * 3. Verifies discovered path has .git
- * 4. Copies downstream block snapshots to repo path
- * 5. Executes git branch + add + commit flow
- * 
- * # Arguments
- * * `file_id` - Elf file containing the task block
- * * `task_block_id` - The task block to commit
- * * `editor_id` - Optional editor ID (defaults to active editor)
- */
-async commitTask(fileId: string, taskBlockId: string, editorId: string | null) : Promise<Result<TaskCommitResult, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('checkout_workspace', {
+          fileId,
+          blockId,
+          payload,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Execute a task commit (Tauri command wrapper).
+   */
+  async commitTask(
+    fileId: string,
+    taskBlockId: string,
+    editorId: string | null
+  ): Promise<Result<TaskCommitResult, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("commit_task", { fileId, taskBlockId, editorId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Inject git hooks into a linked repository (commit protect ON).
- * 
- * Hooks are stored in the .elf temp dir, so they disappear on crash/close.
- * Sets `core.hooksPath` to block direct commits and require task.commit workflow.
- * 
- * # Arguments
- * * `file_id` - Elf file ID (used to locate temp dir)
- * * `repo_path` - External project git repo root
- */
-async injectHooksForRepo(fileId: string, repoPath: string) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('commit_task', {
+          fileId,
+          taskBlockId,
+          editorId,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Inject git hooks into a linked repository (commit protect ON).
+   *
+   * Hooks are stored in the .elf temp dir, so they disappear on crash/close.
+   * Sets `core.hooksPath` to block direct commits and require task.commit workflow.
+   * Hook content is read from the .elf/ block (event sourced).
+   */
+  async injectHooksForRepo(
+    fileId: string,
+    repoPath: string
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("inject_hooks_for_repo", { fileId, repoPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Remove git hooks from a linked repository (commit protect OFF).
- * 
- * Restores original `core.hooksPath` and cleans up Elfiee hook files.
- */
-async removeHooksForRepo(fileId: string, repoPath: string) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('inject_hooks_for_repo', { fileId, repoPath }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Remove git hooks from a linked repository (commit protect OFF).
+   *
+   * Restores original `core.hooksPath` and cleans up Elfiee hook files.
+   */
+  async removeHooksForRepo(
+    fileId: string,
+    repoPath: string
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("remove_hooks_for_repo", { fileId, repoPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Check if git hooks are currently injected for a repo.
- */
-async isHooksActive(fileId: string, repoPath: string) : Promise<Result<boolean, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('remove_hooks_for_repo', { fileId, repoPath }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Check if git hooks are currently injected for a repo.
+   */
+  async isHooksActive(
+    fileId: string,
+    repoPath: string
+  ): Promise<Result<boolean, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("is_hooks_active", { fileId, repoPath }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Initialize and create a new PTY session.
- * 
- * This command:
- * 1. Creates a PTY using pure functions from utils/pty.rs
- * 2. Spawns a shell process
- * 3. Starts a reader thread to forward PTY output to the frontend
- * 4. Stores the session in TerminalState
- * 
- * Note: The terminal.init capability should be called separately via
- * execute_command to record the session_started event.
- * 
- * # Arguments
- * * `app` - Tauri app handle for emitting events
- * * `state` - Terminal state containing active sessions
- * * `block_id` - The terminal block ID
- * * `cols` - Number of columns
- * * `rows` - Number of rows
- * * `cwd` - Optional working directory
- * 
- * # Returns
- * * `Ok(())` - Session created successfully
- * * `Err(String)` - Error if creation fails
- */
-async initPtySession(blockId: string, cols: number, rows: number, cwd: string | null) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('is_hooks_active', { fileId, repoPath }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Initialize and create a new PTY session.
+   *
+   * This command:
+   * 1. Creates a PTY using pure functions from utils/pty.rs
+   * 2. Spawns a shell process
+   * 3. Starts a reader thread to forward PTY output to the frontend
+   * 4. Stores the session in TerminalState
+   *
+   * Note: The terminal.init capability should be called separately via
+   * execute_command to record the session_started event.
+   *
+   * # Arguments
+   * * `app` - Tauri app handle for emitting events
+   * * `state` - Terminal state containing active sessions
+   * * `block_id` - The terminal block ID
+   * * `cols` - Number of columns
+   * * `rows` - Number of rows
+   * * `cwd` - Optional working directory
+   *
+   * # Returns
+   * * `Ok(())` - Session created successfully
+   * * `Err(String)` - Error if creation fails
+   */
+  async initPtySession(
+    blockId: string,
+    cols: number,
+    rows: number,
+    cwd: string | null
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("init_pty_session", { blockId, cols, rows, cwd }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Write data to the PTY.
- * 
- * This command forwards user input from the frontend terminal (xterm.js)
- * to the backend PTY process.
- * 
- * **Note**: This is a high-frequency operation (called on every keystroke).
- * No capability check is performed for performance reasons.
- * Authorization was already checked during session initialization.
- * 
- * # Arguments
- * * `state` - Terminal state containing active sessions
- * * `block_id` - The terminal block ID
- * * `data` - The data to write (user input)
- * 
- * # Returns
- * * `Ok(())` - Data written successfully
- * * `Err(String)` - Error if session not found or write fails
- */
-async writeToPty(blockId: string, data: string) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('init_pty_session', {
+          blockId,
+          cols,
+          rows,
+          cwd,
+        }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Write data to the PTY.
+   *
+   * This command forwards user input from the frontend terminal (xterm.js)
+   * to the backend PTY process.
+   *
+   * **Note**: This is a high-frequency operation (called on every keystroke).
+   * No capability check is performed for performance reasons.
+   * Authorization was already checked during session initialization.
+   *
+   * # Arguments
+   * * `state` - Terminal state containing active sessions
+   * * `block_id` - The terminal block ID
+   * * `data` - The data to write (user input)
+   *
+   * # Returns
+   * * `Ok(())` - Data written successfully
+   * * `Err(String)` - Error if session not found or write fails
+   */
+  async writeToPty(
+    blockId: string,
+    data: string
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("write_to_pty", { blockId, data }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Resize the PTY.
- * 
- * This command updates the PTY window dimensions when the frontend
- * terminal viewport changes size.
- * 
- * **Note**: This is a high-frequency operation (called on window resize).
- * No capability check is performed for performance reasons.
- * Authorization was already checked during session initialization.
- * 
- * # Arguments
- * * `state` - Terminal state containing active sessions
- * * `block_id` - The terminal block ID
- * * `cols` - New number of columns
- * * `rows` - New number of rows
- * 
- * # Returns
- * * `Ok(())` - PTY resized successfully
- * * `Err(String)` - Error if session not found or resize fails
- */
-async resizePty(blockId: string, cols: number, rows: number) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('write_to_pty', { blockId, data }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Resize the PTY.
+   *
+   * This command updates the PTY window dimensions when the frontend
+   * terminal viewport changes size.
+   *
+   * **Note**: This is a high-frequency operation (called on window resize).
+   * No capability check is performed for performance reasons.
+   * Authorization was already checked during session initialization.
+   *
+   * # Arguments
+   * * `state` - Terminal state containing active sessions
+   * * `block_id` - The terminal block ID
+   * * `cols` - New number of columns
+   * * `rows` - New number of rows
+   *
+   * # Returns
+   * * `Ok(())` - PTY resized successfully
+   * * `Err(String)` - Error if session not found or resize fails
+   */
+  async resizePty(
+    blockId: string,
+    cols: number,
+    rows: number
+  ): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("resize_pty", { blockId, cols, rows }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Close a PTY session.
- * 
- * This command removes the session from state and drops the PTY resources.
- * When the session is dropped, the reader thread receives EOF and exits naturally.
- * 
- * Note: The terminal.close capability should be called separately via
- * execute_command to record the session_closed event.
- * 
- * # Arguments
- * * `state` - Terminal state containing active sessions
- * * `block_id` - The terminal block ID
- * 
- * # Returns
- * * `Ok(())` - Session closed successfully (or was already closed)
- * * `Err(String)` - Error if operation fails
- */
-async closePtySession(blockId: string) : Promise<Result<null, string>> {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('resize_pty', { blockId, cols, rows }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Close a PTY session.
+   *
+   * This command removes the session from state and drops the PTY resources.
+   * When the session is dropped, the reader thread receives EOF and exits naturally.
+   *
+   * Note: The terminal.close capability should be called separately via
+   * execute_command to record the session_closed event.
+   *
+   * # Arguments
+   * * `state` - Terminal state containing active sessions
+   * * `block_id` - The terminal block ID
+   *
+   * # Returns
+   * * `Ok(())` - Session closed successfully (or was already closed)
+   * * `Err(String)` - Error if operation fails
+   */
+  async closePtySession(blockId: string): Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("close_pty_session", { blockId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-}
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('close_pty_session', { blockId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Create an Agent Block bound to a .claude/ directory and auto-enable it.
+   */
+  async agentCreate(
+    fileId: string,
+    payload: AgentCreatePayload
+  ): Promise<Result<AgentCreateResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('agent_create', { fileId, payload }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Enable an Agent Block: recreate symlink and inject MCP config.
+   */
+  async agentEnable(
+    fileId: string,
+    agentBlockId: string
+  ): Promise<Result<AgentEnableResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('agent_enable', { fileId, agentBlockId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Disable an Agent Block: remove symlink and MCP config.
+   */
+  async agentDisable(
+    fileId: string,
+    agentBlockId: string
+  ): Promise<Result<AgentDisableResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('agent_disable', { fileId, agentBlockId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
 }
 
 /** user-defined events **/
 
-
+export const events = __makeEvents__<{
+  ptyOutputEvent: PtyOutputEvent
+  stateChangedEvent: StateChangedEvent
+}>({
+  ptyOutputEvent: 'pty-output-event',
+  stateChangedEvent: 'state-changed-event',
+})
 
 /** user-defined constants **/
-
-
 
 /** user-defined types **/
 
 /**
+ * Agent Block contents, storing per-AI-tool integration config.
+ *
+ * Stored in `Block.contents`.
+ *
+ * Key change from V1: binds to `config_dir` (absolute path) instead of Dir Block ID.
+ * `editor_id` is now required (not optional).
+ */
+export type AgentContents = {
+  /**
+   * Agent display name (default: "elfiee")
+   */
+  name: string
+  /**
+   * AI tool provider identifier.
+   *
+   * Examples: "claude_code", "cursor", "windsurf"
+   * Used to determine provider-specific behavior (symlink paths, MCP config format, etc.)
+   */
+  provider?: string
+  /**
+   * Absolute path to the AI tool's config directory this agent is bound to.
+   *
+   * Examples:
+   * - Claude Code: "/home/user/repo-a/.claude"
+   * - Cursor: "/home/user/repo-a/.cursor"
+   *
+   * Used to derive:
+   * - Symlink target: `{config_dir}/skills/elfiee-client/`
+   * - MCP config locations: `{config_dir.parent()}/.mcp.json` + `{config_dir}/mcp.json`
+   */
+  config_dir: string
+  /**
+   * Agent current status
+   */
+  status: AgentStatus
+  /**
+   * Bot editor_id associated with this agent (required).
+   * Used by per-agent MCP server to attribute operations to the correct identity.
+   */
+  editor_id: string
+}
+/**
+ * Payload for agent.create capability
+ */
+export type AgentCreatePayload = {
+  /**
+   * Agent display name (optional, default: "elfiee")
+   */
+  name?: string | null
+  /**
+   * AI tool provider identifier (optional, default: "claude_code")
+   */
+  provider?: string
+  /**
+   * Absolute path to the AI tool's config directory (required)
+   */
+  config_dir: string
+  /**
+   * Bot editor_id to associate with this agent.
+   * If not provided, the command layer auto-creates a bot editor.
+   */
+  editor_id?: string | null
+}
+/**
+ * Result type for agent.create Tauri command
+ */
+export type AgentCreateResult = {
+  /**
+   * Created Agent Block ID
+   */
+  agent_block_id: string
+  /**
+   * Agent status after creation
+   */
+  status: AgentStatus
+  /**
+   * Whether the user needs to restart Claude Code
+   */
+  needs_restart: boolean
+  /**
+   * Human-readable message
+   */
+  message: string
+}
+/**
+ * Payload for agent.disable capability
+ */
+export type AgentDisablePayload = {
+  /**
+   * Agent Block ID (required)
+   */
+  agent_block_id: string
+}
+/**
+ * Result type for agent.disable Tauri command
+ */
+export type AgentDisableResult = {
+  /**
+   * Agent Block ID
+   */
+  agent_block_id: string
+  /**
+   * Agent status after disable
+   */
+  status: AgentStatus
+  /**
+   * Human-readable message
+   */
+  message: string
+  /**
+   * Warnings for partial failures
+   */
+  warnings: string[]
+}
+/**
+ * Payload for agent.enable capability
+ */
+export type AgentEnablePayload = {
+  /**
+   * Agent Block ID (required)
+   */
+  agent_block_id: string
+}
+/**
+ * Result type for agent.enable Tauri command
+ */
+export type AgentEnableResult = {
+  /**
+   * Agent Block ID
+   */
+  agent_block_id: string
+  /**
+   * Agent status after enable
+   */
+  status: AgentStatus
+  /**
+   * Whether the user needs to restart Claude Code
+   */
+  needs_restart: boolean
+  /**
+   * Human-readable message
+   */
+  message: string
+  /**
+   * Warnings for partial failures (e.g. symlink OK but MCP config failed)
+   */
+  warnings: string[]
+}
+/**
+ * Agent enable/disable status
+ */
+export type AgentStatus =
+  /**
+   * Enabled: symlink exists, MCP config injected, MCP server running
+   */
+  | 'enabled'
+  /**
+   * Disabled: symlink cleaned, MCP config removed, MCP server stopped
+   */
+  | 'disabled'
+/**
  * Block 是 Elfiee 的基本内容单元。
- * 
+ *
  * `children` 字段存储逻辑因果关系图（Logical Causal Graph），
  * key 仅允许 `RELATION_IMPLEMENT`（即 `"implement"`），
  * value 为下游 block_id 列表。
  */
-export type Block = { block_id: string; name: string; block_type: string; contents: JsonValue; children: Partial<{ [key in string]: string[] }>; owner: string; 
-/**
- * Block metadata with timestamps and custom fields
- */
-metadata: BlockMetadata }
+export type Block = {
+  block_id: string
+  name: string
+  block_type: string
+  contents: JsonValue
+  children: Partial<{ [key in string]: string[] }>
+  owner: string
+  /**
+   * Block metadata with timestamps and custom fields
+   */
+  metadata: BlockMetadata
+}
 /**
  * Block metadata structure (recommended format)
- * 
+ *
  * Stored in Block.metadata field (JSON format).
  * This structure defines the recommended metadata format, but is not enforced.
- * 
+ *
  * # Fields
  * * `description` - Detailed description of the block
  * * `created_at` - Creation timestamp (ISO 8601 UTC format, e.g., "2025-12-17T02:30:00Z")
  * * `updated_at` - Last update timestamp (ISO 8601 UTC format)
  * * `custom` - Custom extension fields (merged into root object via #[serde(flatten)])
  */
-export type BlockMetadata = 
-/**
- * Custom extension fields
- */
-(Partial<{ [key in string]: null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }> }>) & { 
-/**
- * Block description
- */
-description?: string | null; 
-/**
- * Creation timestamp (ISO 8601 UTC)
- */
-created_at?: string | null; 
-/**
- * Last update timestamp (ISO 8601 UTC)
- */
-updated_at?: string | null }
+export type BlockMetadata =
+  /**
+   * Custom extension fields
+   */
+  Partial<{
+    [key in string]:
+      | null
+      | boolean
+      | number
+      | string
+      | JsonValue[]
+      | Partial<{ [key in string]: JsonValue }>
+  }> & {
+    /**
+     * Block description
+     */
+    description?: string | null
+    /**
+     * Creation timestamp (ISO 8601 UTC)
+     */
+    created_at?: string | null
+    /**
+     * Last update timestamp (ISO 8601 UTC)
+     */
+    updated_at?: string | null
+  }
 /**
  * Payload for CodeRead
  */
@@ -832,45 +1267,65 @@ export type CodeReadPayload = Record<string, never>
 /**
  * Payload for CodeWrite
  */
-export type CodeWritePayload = { 
-/**
- * The source code text content to write
- */
-content: string }
-export type Command = { cmd_id: string; editor_id: string; cap_id: string; block_id: string; payload: JsonValue; 
-/**
- * UTC timestamp when the command was created (timezone-aware)
- */
-timestamp: string }
+export type CodeWritePayload = {
+  /**
+   * The source code text content to write
+   */
+  content: string
+}
+export type Command = {
+  cmd_id: string
+  editor_id: string
+  cap_id: string
+  block_id: string
+  payload: JsonValue
+  /**
+   * UTC timestamp when the command was created (timezone-aware)
+   */
+  timestamp: string
+}
 /**
  * Payload for core.create capability
- * 
+ *
  * This payload is used to create a new block with a name and type.
  */
-export type CreateBlockPayload = { 
-/**
- * The display name for the new block
- */
-name: string; 
-/**
- * The block type (e.g., "markdown", "code", "diagram")
- */
-block_type: string; 
-/**
- * The source category of the block ("outline" or "linked")
- */
-source?: string; 
-/**
- * Optional metadata (description, custom fields, etc.)
- * 
- * If provided, will be merged with auto-generated timestamps.
- * Example: { "description": "项目需求文档" }
- */
-metadata?: JsonValue | null }
+export type CreateBlockPayload = {
+  /**
+   * The display name for the new block
+   */
+  name: string
+  /**
+   * The block type (e.g., "markdown", "code", "diagram")
+   */
+  block_type: string
+  /**
+   * The source category of the block ("outline" or "linked")
+   */
+  source?: string
+  /**
+   * Optional metadata (description, custom fields, etc.)
+   *
+   * If provided, will be merged with auto-generated timestamps.
+   * Example: { "description": "项目需求文档" }
+   */
+  metadata?: JsonValue | null
+}
 /**
  * Payload for DirectoryCreate
  */
-export type DirectoryCreatePayload = { path: string; type: string; source: string; content?: string | null; block_type?: string | null }
+export type DirectoryCreatePayload = {
+  path: string
+  type: string
+  source: string
+  content?: string | null
+  block_type?: string | null
+  /**
+   * Optional: Link an existing block instead of creating a new one.
+   * When provided (and entry_type is "file"), skips core.create and
+   * registers the existing block_id in the directory index.
+   */
+  existing_block_id?: string | null
+}
 /**
  * Payload for DirectoryDelete
  */
@@ -878,178 +1333,245 @@ export type DirectoryDeletePayload = { path: string }
 /**
  * Payload for DirectoryExport
  */
-export type DirectoryExportPayload = { target_path: string; source_path?: string | null }
+export type DirectoryExportPayload = {
+  target_path: string
+  source_path?: string | null
+}
 /**
  * Payload for DirectoryImport
  */
-export type DirectoryImportPayload = { source_path: string; target_path?: string | null }
+export type DirectoryImportPayload = {
+  source_path: string
+  target_path?: string | null
+}
 /**
  * Payload for DirectoryRename
  */
 export type DirectoryRenamePayload = { old_path: string; new_path: string }
 /**
  * Payload for DirectoryRenameWithTypeChange
- * 
+ *
  * Atomically renames a file entry and changes its block type in a single transaction.
  * This ensures consistency when file extension changes require block type updates.
  */
-export type DirectoryRenameWithTypeChangePayload = { old_path: string; new_path: string; 
-/**
- * Optional: Directly specify the new block type (e.g., "markdown", "code")
- */
-block_type?: string | null; 
-/**
- * Optional: Infer block type from file extension (e.g., "md", "rs", "txt")
- */
-file_extension?: string | null }
+export type DirectoryRenameWithTypeChangePayload = {
+  old_path: string
+  new_path: string
+  /**
+   * Optional: Directly specify the new block type (e.g., "markdown", "code")
+   */
+  block_type?: string | null
+  /**
+   * Optional: Infer block type from file extension (e.g., "md", "rs", "txt")
+   */
+  file_extension?: string | null
+}
 /**
  * Payload for directory.write capability.
- * 
+ *
  * Used to directly update the entries map of a directory block.
  */
-export type DirectoryWritePayload = { 
-/**
- * The full entries map to be saved
- */
-entries: JsonValue; 
-/**
- * The source category of this directory block ("outline" or "linked")
- */
-source?: string | null }
-export type Editor = { editor_id: string; name: string; editor_type?: EditorType }
+export type DirectoryWritePayload = {
+  /**
+   * The full entries map to be saved
+   */
+  entries: JsonValue
+  /**
+   * The source category of this directory block ("outline" or "linked")
+   */
+  source?: string | null
+}
+export type Editor = {
+  editor_id: string
+  name: string
+  editor_type?: EditorType
+}
 /**
  * Payload for editor.create capability
- * 
+ *
  * This payload is used to create a new editor identity in the file.
  */
-export type EditorCreatePayload = { 
-/**
- * The display name for the new editor
- */
-name: string; 
-/**
- * The type of editor (Human or Bot), defaults to Human if not specified
- */
-editor_type?: string | null; 
-/**
- * Optional explicitly provided editor ID (e.g. system editor ID)
- */
-editor_id?: string | null }
+export type EditorCreatePayload = {
+  /**
+   * The display name for the new editor
+   */
+  name: string
+  /**
+   * The type of editor (Human or Bot), defaults to Human if not specified
+   */
+  editor_type?: string | null
+  /**
+   * Optional explicitly provided editor ID (e.g. system editor ID)
+   */
+  editor_id?: string | null
+}
 /**
  * Payload for editor.delete capability
- * 
+ *
  * This payload is used to delete an editor identity from the file.
  */
-export type EditorDeletePayload = { 
-/**
- * The editor ID to delete
- */
-editor_id: string }
-export type EditorType = "Human" | "Bot"
-export type Event = { event_id: string; entity: string; attribute: string; value: JsonValue; timestamp: Partial<{ [key in string]: number }>; created_at: string }
+export type EditorDeletePayload = {
+  /**
+   * The editor ID to delete
+   */
+  editor_id: string
+}
+export type EditorType = 'Human' | 'Bot'
+export type Event = {
+  event_id: string
+  entity: string
+  attribute: string
+  value: JsonValue
+  timestamp: Partial<{ [key in string]: number }>
+  created_at: string
+}
 /**
  * File metadata for frontend display.
- * 
+ *
  * This structure contains all information about a file that the UI needs to display,
  * including the file name, path, collaborators (editors), and timestamps.
  */
-export type FileMetadata = { file_id: string; name: string; path: string; collaborators: string[]; created_at: string; updated_at: string }
+export type FileMetadata = {
+  file_id: string
+  name: string
+  path: string
+  collaborators: string[]
+  created_at: string
+  updated_at: string
+}
 /**
  * Represents a capability grant in the CBAC system.
- * 
+ *
  * Grants define which editors have which capabilities on which blocks.
  * They are projected from grant/revoke events in the EventStore.
  */
-export type Grant = { 
-/**
- * The editor who has been granted the capability
- */
-editor_id: string; 
-/**
- * The capability that has been granted (e.g., "markdown.write", "core.delete")
- */
-cap_id: string; 
-/**
- * The target block ID, or "*" for wildcard (all blocks)
- */
-block_id: string }
+export type Grant = {
+  /**
+   * The editor who has been granted the capability
+   */
+  editor_id: string
+  /**
+   * The capability that has been granted (e.g., "markdown.write", "core.delete")
+   */
+  cap_id: string
+  /**
+   * The target block ID, or "*" for wildcard (all blocks)
+   */
+  block_id: string
+}
 /**
  * Payload for core.grant capability
- * 
+ *
  * This payload is used to grant a capability to an editor for a specific block.
  */
-export type GrantPayload = { 
-/**
- * The editor ID to grant the capability to
- */
-target_editor: string; 
-/**
- * The capability ID to grant (e.g., "markdown.write", "core.delete")
- */
-capability: string; 
-/**
- * The block ID to grant access to, or "*" for all blocks (wildcard)
- */
-target_block?: string }
-export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
+export type GrantPayload = {
+  /**
+   * The editor ID to grant the capability to
+   */
+  target_editor: string
+  /**
+   * The capability ID to grant (e.g., "markdown.write", "core.delete")
+   */
+  capability: string
+  /**
+   * The block ID to grant access to, or "*" for all blocks (wildcard)
+   */
+  target_block?: string
+}
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | Partial<{ [key in string]: JsonValue }>
 /**
  * Payload for core.link capability
- * 
+ *
  * This payload is used to create a link (relation) from one block to another.
  */
-export type LinkBlockPayload = { 
-/**
- * The relation type (must be "implement")
- */
-relation: string; 
-/**
- * The target block ID to link to
- */
-target_id: string }
+export type LinkBlockPayload = {
+  /**
+   * The relation type (must be "implement")
+   */
+  relation: string
+  /**
+   * The target block ID to link to
+   */
+  target_id: string
+}
 /**
  * Payload for markdown.write capability
- * 
+ *
  * This payload is used to write markdown content to a markdown block.
  * The content is stored directly as a string in the block's contents.markdown field.
  */
-export type MarkdownWritePayload = { 
+export type MarkdownWritePayload = {
+  /**
+   * The markdown content to write to the block
+   */
+  content: string
+}
 /**
- * The markdown content to write to the block
+ * Emitted when PTY produces output (high-frequency, from reader thread).
+ *
+ * The frontend terminal (xterm.js) decodes the base64 data and writes it to the screen.
+ * Only emitted by GUI-initiated PTY sessions (not MCP-initiated sessions which
+ * only write to the output buffer).
  */
-content: string }
+export type PtyOutputEvent = {
+  /**
+   * Base64 encoded output data
+   */
+  data: string
+  /**
+   * The terminal block ID
+   */
+  block_id: string
+}
 /**
  * Payload for core.revoke capability
- * 
+ *
  * This payload is used to revoke a capability from an editor for a specific block.
  */
-export type RevokePayload = { 
+export type RevokePayload = {
+  /**
+   * The editor ID to revoke the capability from
+   */
+  target_editor: string
+  /**
+   * The capability ID to revoke
+   */
+  capability: string
+  /**
+   * The block ID to revoke access from, or "*" for all blocks (wildcard)
+   */
+  target_block?: string
+}
 /**
- * The editor ID to revoke the capability from
+ * Emitted when backend state changes (e.g., blocks modified via MCP or Tauri commands).
+ *
+ * The frontend auto-refreshes blocks, grants, and events for the affected file.
+ * Sent through the `state_changed_tx` broadcast channel by both Tauri commands
+ * and the MCP server after successful command processing.
  */
-target_editor: string; 
-/**
- * The capability ID to revoke
- */
-capability: string; 
-/**
- * The block ID to revoke access from, or "*" for all blocks (wildcard)
- */
-target_block?: string }
+export type StateChangedEvent = { file_id: string }
 /**
  * Full state snapshot at a specific point in time.
  */
-export type StateSnapshot = { 
-/**
- * Block state at that event
- */
-block: Block; 
-/**
- * All grants in the system at that event
- */
-grants: Grant[] }
+export type StateSnapshot = {
+  /**
+   * Block state at that event
+   */
+  block: Block
+  /**
+   * All grants in the system at that event
+   */
+  grants: Grant[]
+}
 /**
  * Payload for task.commit capability
- * 
+ *
  * Empty payload — target repo is auto-discovered from downstream blocks'
  * `_block_dir` metadata, which links to external git repositories.
  */
@@ -1057,179 +1579,186 @@ export type TaskCommitPayload = Record<string, never>
 /**
  * Result of a task.commit operation.
  */
-export type TaskCommitResult = { 
-/**
- * Git commit hash
- */
-commit_hash: string; 
-/**
- * Git branch name
- */
-branch_name: string; 
-/**
- * List of exported file paths
- */
-exported_files: string[] }
+export type TaskCommitResult = {
+  /**
+   * Git commit hash
+   */
+  commit_hash: string
+  /**
+   * Git branch name
+   */
+  branch_name: string
+  /**
+   * List of exported file paths
+   */
+  exported_files: string[]
+}
 /**
  * Payload for task.read capability
- * 
+ *
  * task.read is a permission-only capability, similar to markdown.read.
  * No payload fields needed — the empty JSON object `{}` is accepted.
  */
 export type TaskReadPayload = Record<string, never>
 /**
  * Payload for task.write capability
- * 
+ *
  * Contains markdown content for a task block.
  * Stored in `contents` as `{ "markdown": "..." }` — same model as markdown blocks.
  * Title is stored in `block.name`, description in `metadata.description`.
  */
-export type TaskWritePayload = { 
-/**
- * Markdown 内容
- */
-content: string }
+export type TaskWritePayload = {
+  /**
+   * Markdown 内容
+   */
+  content: string
+}
 /**
  * Payload for terminal.execute capability
- * 
+ *
  * This payload records a command execution in the terminal for audit/history.
  */
-export type TerminalExecutePayload = { 
-/**
- * The command string that was executed
- */
-command: string; 
-/**
- * Exit code of the command (if available)
- */
-exit_code: number | null }
+export type TerminalExecutePayload = {
+  /**
+   * The command string that was executed
+   */
+  command: string
+  /**
+   * Exit code of the command (if available)
+   */
+  exit_code: number | null
+}
 /**
  * Payload for terminal.init capability
- * 
+ *
  * This payload is used to initialize a PTY session for a terminal block.
  */
-export type TerminalInitPayload = { 
-/**
- * Number of columns in the terminal
- */
-cols: number; 
-/**
- * Number of rows in the terminal
- */
-rows: number; 
-/**
- * The terminal block ID
- */
-block_id: string; 
-/**
- * The editor initiating the session
- */
-editor_id: string; 
-/**
- * The file containing the terminal block (required for permission checking)
- */
-file_id: string; 
-/**
- * Optional initial working directory
- */
-cwd: string | null }
+export type TerminalInitPayload = {
+  /**
+   * Number of columns in the terminal
+   */
+  cols: number
+  /**
+   * Number of rows in the terminal
+   */
+  rows: number
+  /**
+   * The terminal block ID
+   */
+  block_id: string
+  /**
+   * The editor initiating the session
+   */
+  editor_id: string
+  /**
+   * The file containing the terminal block (required for permission checking)
+   */
+  file_id: string
+  /**
+   * Optional initial working directory
+   */
+  cwd: string | null
+}
 /**
  * Payload for terminal.save capability
- * 
+ *
  * This payload is used to save terminal content (buffer snapshot) to a terminal block.
  */
-export type TerminalSavePayload = { 
-/**
- * The terminal content to save (typically from xterm.js buffer)
- */
-saved_content: string; 
-/**
- * Timestamp when the content was saved (ISO 8601 format)
- */
-saved_at: string }
+export type TerminalSavePayload = {
+  /**
+   * The terminal content to save (typically from xterm.js buffer)
+   */
+  saved_content: string
+  /**
+   * Timestamp when the content was saved (ISO 8601 format)
+   */
+  saved_at: string
+}
 /**
  * Payload for core.unlink capability
- * 
+ *
  * This payload is used to remove a link (relation) from one block to another.
  */
-export type UnlinkBlockPayload = { 
-/**
- * The relation type (must be "implement")
- */
-relation: string; 
-/**
- * The target block ID to unlink
- */
-target_id: string }
+export type UnlinkBlockPayload = {
+  /**
+   * The relation type (must be "implement")
+   */
+  relation: string
+  /**
+   * The target block ID to unlink
+   */
+  target_id: string
+}
 /**
  * Payload for core.update_metadata capability
- * 
+ *
  * This payload is used to update metadata fields of an existing block.
  * The metadata will be merged with existing metadata (not replaced).
  */
-export type UpdateMetadataPayload = { 
-/**
- * Metadata fields to update or add
- * Example: { "description": "Updated description", "tags": ["tag1", "tag2"] }
- */
-metadata: JsonValue }
+export type UpdateMetadataPayload = {
+  /**
+   * Metadata fields to update or add
+   * Example: { "description": "Updated description", "tags": ["tag1", "tag2"] }
+   */
+  metadata: JsonValue
+}
 
 /** tauri-specta globals **/
 
 import {
-	invoke as TAURI_INVOKE,
-	Channel as TAURI_CHANNEL,
-} from "@tauri-apps/api/core";
-import * as TAURI_API_EVENT from "@tauri-apps/api/event";
-import { type WebviewWindow as __WebviewWindow__ } from "@tauri-apps/api/webviewWindow";
+  invoke as TAURI_INVOKE,
+  Channel as TAURI_CHANNEL,
+} from '@tauri-apps/api/core'
+import * as TAURI_API_EVENT from '@tauri-apps/api/event'
+import { type WebviewWindow as __WebviewWindow__ } from '@tauri-apps/api/webviewWindow'
 
 type __EventObj__<T> = {
-	listen: (
-		cb: TAURI_API_EVENT.EventCallback<T>,
-	) => ReturnType<typeof TAURI_API_EVENT.listen<T>>;
-	once: (
-		cb: TAURI_API_EVENT.EventCallback<T>,
-	) => ReturnType<typeof TAURI_API_EVENT.once<T>>;
-	emit: null extends T
-		? (payload?: T) => ReturnType<typeof TAURI_API_EVENT.emit>
-		: (payload: T) => ReturnType<typeof TAURI_API_EVENT.emit>;
-};
+  listen: (
+    cb: TAURI_API_EVENT.EventCallback<T>
+  ) => ReturnType<typeof TAURI_API_EVENT.listen<T>>
+  once: (
+    cb: TAURI_API_EVENT.EventCallback<T>
+  ) => ReturnType<typeof TAURI_API_EVENT.once<T>>
+  emit: null extends T
+    ? (payload?: T) => ReturnType<typeof TAURI_API_EVENT.emit>
+    : (payload: T) => ReturnType<typeof TAURI_API_EVENT.emit>
+}
 
 export type Result<T, E> =
-	| { status: "ok"; data: T }
-	| { status: "error"; error: E };
+  | { status: 'ok'; data: T }
+  | { status: 'error'; error: E }
 
 function __makeEvents__<T extends Record<string, any>>(
-	mappings: Record<keyof T, string>,
+  mappings: Record<keyof T, string>
 ) {
-	return new Proxy(
-		{} as unknown as {
-			[K in keyof T]: __EventObj__<T[K]> & {
-				(handle: __WebviewWindow__): __EventObj__<T[K]>;
-			};
-		},
-		{
-			get: (_, event) => {
-				const name = mappings[event as keyof T];
+  return new Proxy(
+    {} as unknown as {
+      [K in keyof T]: __EventObj__<T[K]> & {
+        (handle: __WebviewWindow__): __EventObj__<T[K]>
+      }
+    },
+    {
+      get: (_, event) => {
+        const name = mappings[event as keyof T]
 
-				return new Proxy((() => {}) as any, {
-					apply: (_, __, [window]: [__WebviewWindow__]) => ({
-						listen: (arg: any) => window.listen(name, arg),
-						once: (arg: any) => window.once(name, arg),
-						emit: (arg: any) => window.emit(name, arg),
-					}),
-					get: (_, command: keyof __EventObj__<any>) => {
-						switch (command) {
-							case "listen":
-								return (arg: any) => TAURI_API_EVENT.listen(name, arg);
-							case "once":
-								return (arg: any) => TAURI_API_EVENT.once(name, arg);
-							case "emit":
-								return (arg: any) => TAURI_API_EVENT.emit(name, arg);
-						}
-					},
-				});
-			},
-		},
-	);
+        return new Proxy((() => {}) as any, {
+          apply: (_, __, [window]: [__WebviewWindow__]) => ({
+            listen: (arg: any) => window.listen(name, arg),
+            once: (arg: any) => window.once(name, arg),
+            emit: (arg: any) => window.emit(name, arg),
+          }),
+          get: (_, command: keyof __EventObj__<any>) => {
+            switch (command) {
+              case 'listen':
+                return (arg: any) => TAURI_API_EVENT.listen(name, arg)
+              case 'once':
+                return (arg: any) => TAURI_API_EVENT.once(name, arg)
+              case 'emit':
+                return (arg: any) => TAURI_API_EVENT.emit(name, arg)
+            }
+          },
+        })
+      },
+    }
+  )
 }
