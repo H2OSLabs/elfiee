@@ -1,6 +1,6 @@
 ---
 name: elfiee-client
-description: "Guide for using Elfiee MCP tools to interact with .elf files. Use when Claude needs to read, write, or manage blocks inside .elf projects via MCP tools (elfiee_file_list, elfiee_block_*, elfiee_markdown_*, elfiee_code_*, elfiee_directory_*, elfiee_terminal_*, elfiee_grant/revoke, elfiee_editor_*, elfiee_exec) or MCP resources (elfiee://files, elfiee://{project}/blocks, elfiee://{project}/block/{id}, elfiee://{project}/grants, elfiee://{project}/events). Triggers: working with .elf files, managing blocks, reading/writing markdown or code in blocks, directory operations inside .elf, terminal sessions, permission management."
+description: "Guide for using Elfiee MCP tools to interact with .elf files. Use when Claude needs to read, write, or manage blocks inside .elf projects via MCP tools (elfiee_file_list, elfiee_block_*, elfiee_markdown_*, elfiee_code_*, elfiee_directory_*, elfiee_terminal_*, elfiee_task_*, elfiee_editor_*, elfiee_exec) or MCP resources (elfiee://files, elfiee://{project}/blocks, elfiee://{project}/block/{id}, elfiee://{project}/grants, elfiee://{project}/events). Includes causal linking protocol (implement relations), DAG constraints, graph-first context navigation, and TDD best practices. Triggers: working with .elf files, managing blocks, reading/writing markdown or code in blocks, directory operations inside .elf, terminal sessions, task management, creating causal links between blocks, navigating block relationships."
 ---
 
 # Elfiee MCP Tools
@@ -9,7 +9,8 @@ Elfiee exposes MCP tools and resources for interacting with `.elf` files. Two co
 
 | Mode | Transport | When to use |
 |------|-----------|-------------|
-| **GUI mode** | SSE on port 47200 | Elfiee GUI is running with files open |
+| **Per-agent mode** | SSE on port 47201–47299 | Each enabled agent gets a dedicated port (configured automatically) |
+| **Management mode** | SSE on port 47200 | Fallback/legacy mode using GUI active editor |
 | **Standalone mode** | stdio (JSON-RPC) | No GUI needed; Claude Code launches `elfiee mcp-server --elf <path>` |
 
 ## Prohibited Actions
@@ -67,7 +68,7 @@ Every tool (except `elfiee_file_list`) requires `project` -- the `.elf` file pat
 
 ## Block Types
 
-`markdown` | `code` | `directory` | `terminal`
+`markdown` | `code` | `directory` | `terminal` | `task`
 
 ## Tool Reference
 
@@ -96,7 +97,7 @@ Every tool (except `elfiee_file_list`) requires `project` -- the `.elf` file pat
 | `elfiee_block_link` | Link parent->child | `project`, `parent_id`, `child_id`, `relation` |
 | `elfiee_block_unlink` | Remove relation | `project`, `parent_id`, `child_id`, `relation` |
 
-Relation types: `contains`, `references`, `implement`, or custom strings.
+Relation type: `implement` (the only allowed relation type). Semantic: `A → B` means "A's change caused B's change".
 
 ### Content Read/Write
 
@@ -127,6 +128,15 @@ Relation types: `contains`, `references`, `implement`, or custom strings.
 | `elfiee_terminal_save` | Save session content | `project`, `block_id`, `content` |
 | `elfiee_terminal_close` | Close session | `project`, `block_id` |
 
+### Task Operations
+
+| Tool | Purpose | Key Params |
+|------|---------|------------|
+| `elfiee_task_create` | Create a new task | `project`, `name`, `description?` |
+| `elfiee_task_write` | Write task content | `project`, `block_id`, `content` |
+| `elfiee_task_commit` | Commit task to git | `project`, `block_id` |
+| `elfiee_task_link` | Link task to implementation | `project`, `task_id`, `block_id` |
+
 ### Permission (CBAC)
 
 | Tool | Purpose | Key Params |
@@ -134,7 +144,9 @@ Relation types: `contains`, `references`, `implement`, or custom strings.
 | `elfiee_grant` | Grant capability | `project`, `block_id`, `editor_id`, `cap_id` |
 | `elfiee_revoke` | Revoke capability | `project`, `block_id`, `editor_id`, `cap_id` |
 
-Capability IDs: `core.create`, `core.read`, `core.link`, `core.unlink`, `core.delete`, `core.grant`, `core.revoke`, `core.update_metadata`, `core.rename`, `core.change_type`, `markdown.write`, `markdown.read`, `code.write`, `code.read`, `directory.create`, `directory.delete`, `directory.rename`, `directory.write`, `directory.import`, `directory.export`, `terminal.init`, `terminal.execute`, `terminal.save`, `terminal.close`, `agent.create`, `agent.enable`, `agent.disable`.
+Capability IDs: `core.create`, `core.read`, `core.link`, `core.unlink`, `core.delete`, `core.grant`, `core.revoke`, `core.update_metadata`, `core.rename`, `core.change_type`, `markdown.write`, `markdown.read`, `code.write`, `code.read`, `directory.create`, `directory.delete`, `directory.rename`, `directory.write`, `directory.import`, `directory.export`, `terminal.init`, `terminal.execute`, `terminal.save`, `terminal.close`, `task.write`, `task.read`, `task.commit`, `agent.create`, `agent.enable`, `agent.disable`.
+
+> **Agent permission note**: Agents do NOT have `core.grant` / `core.revoke` capabilities. Permission management is reserved for human owners via the Elfiee GUI. Do not attempt to call `elfiee_grant` / `elfiee_revoke` — they will fail with authorization errors.
 
 ### Editor Management
 
@@ -186,6 +198,143 @@ Use `elfiee_exec` for capabilities not covered by dedicated tools.
 ```
 1. elfiee_block_link(project, parent_id=task_block_id, child_id=code_block_id, relation="implement")
 ```
+
+### /new-task workflow
+
+When the user says `/new-task` or asks you to create a task:
+
+**Step 1: Create task**
+```
+elfiee_task_create(project, name="Task name", description="What needs to be done")
+-> Store returned task_block_id as ACTIVE_TASK
+```
+
+**Step 2: Work on implementation**
+For EVERY code/markdown block you create or modify while working on this task:
+```
+elfiee_code_write(project, block_id, content)       # or markdown_write
+elfiee_task_link(project, task_id=ACTIVE_TASK, block_id=block_id)  # auto-link
+```
+The link is idempotent — calling it multiple times for the same pair is safe.
+
+**Step 3: Commit**
+```
+elfiee_task_commit(project, block_id=ACTIVE_TASK)
+-> Exports implement-linked blocks to their git repos
+-> Creates branch: feat/{task_name}
+-> Git commit with task description
+-> Returns: { commit_hash, branch_name, exported_files }
+```
+
+**Step 4: Test (optional)**
+```
+elfiee_terminal_execute(project, terminal_block_id, command="cd /repo && cargo test")
+-> If tests fail: fix code -> commit again -> test again
+-> If tests pass: task complete
+```
+
+## Causal Linking Protocol
+
+**This is the core of Elfiee editing.** Every modification must be traceable to its cause through `implement` links.
+
+### Rule: Link Before You Modify
+
+Before modifying Block B because of Block A, create the causal link first:
+
+```
+elfiee_block_link(project, parent_id=A, child_id=B, relation="implement")
+elfiee_code_write(project, block_id=B, content=...)  # then modify
+```
+
+### When to Create Links
+
+| Scenario | Link | Example |
+|----------|------|---------|
+| Task describes requirement, you write Code | Task → Code | `task_block → src/auth.rs` |
+| PRD defines tasks, you create Task | PRD → Task | `prd_block → task_block` |
+| Code written, you write Test for it | Code → Test | `src/auth.rs → tests/auth_test.rs` |
+| Bug report, you fix Code | Bug → Code | `bug_block → src/handler.rs` |
+| Design drives UI component | Design → Code | `design_block → src/component.tsx` |
+
+### When NOT to Link
+
+- You only **read** a block for reference (no causal dependency)
+- The two blocks are unrelated
+- The link already exists (linking is idempotent, but check first to avoid noise)
+
+### DAG Constraint and Cycle Rejection
+
+The relationship graph is a strict **Directed Acyclic Graph (DAG)**. Elfiee automatically detects cycles and rejects link creation if a cycle would form.
+
+**Link direction rule**: Arrow points from **cause** to **effect** — from the upstream block that drove the change to the downstream block that was changed.
+
+```
+cause → effect
+Task  → Code       ✓ (task drives code writing)
+Code  → Test       ✓ (code drives test writing)
+Test  → Code       ✗ CYCLE if Code → Test already exists!
+```
+
+**If `elfiee_block_link` returns a cycle error**:
+
+1. The link direction is wrong — re-examine the causal relationship
+2. The driving force is probably an upstream block (e.g., Task), not the sibling
+3. Do NOT create reverse links to work around the constraint
+
+### TDD Best Practice
+
+In TDD workflows, tests and code may be modified alternately. The correct link structure:
+
+```
+Task → Code → Test
+```
+
+- `Task → Code`: Task requirement drives code implementation
+- `Code → Test`: Code implementation drives test writing
+
+When test failure reveals a code bug:
+- The root cause is still the **Task** (not the test)
+- Do NOT create `Test → Code` — this would form a cycle with `Code → Test`
+- The existing `Task → Code` link already captures the causal chain
+- Fix the code, update the test — no new links needed
+
+### Multi-block Modification Workflow
+
+When a single task requires modifying multiple blocks:
+
+```
+1. elfiee_task_create(project, name="Add auth")  → task_id
+2. For each block to modify:
+   a. elfiee_block_link(project, parent_id=task_id, child_id=block_id, relation="implement")
+   b. elfiee_code_write(project, block_id, content=...)
+3. elfiee_task_commit(project, block_id=task_id)  → exports all linked code to git
+```
+
+## Graph-First Context Navigation
+
+**Rule: When you need context, traverse the relationship graph BEFORE searching unrelated blocks.**
+
+### Algorithm
+
+1. **Read** the target block
+2. **List** all blocks (`elfiee_block_list`) and examine their `children` to build a parent-child map
+3. **Traverse up** (parents → grandparents → root) to understand **why** this block exists
+4. **Traverse down** (children → grandchildren) to understand **what** this block produced
+5. **Read siblings** (other children of the same parent) to understand **related work**
+6. **Only then** search unrelated blocks if the graph doesn't provide enough context
+
+### Example: Understanding a Code Block
+
+```
+1. elfiee_code_read(project, block_id="src/auth.rs")         # read the code
+2. elfiee_block_list(project)                                  # get all blocks
+3. Find: Task "Add auth" has children: [src/auth.rs, src/middleware.rs, tests/auth_test.rs]
+4. elfiee_task_read(project, block_id=task_block)              # understand the requirement (parent)
+5. elfiee_code_read(project, block_id="src/middleware.rs")     # read sibling implementation
+6. elfiee_code_read(project, block_id="tests/auth_test.rs")   # read downstream test
+```
+
+This gives you the full causal context: **why** (task), **what** (code), **verification** (test) — without searching unrelated blocks.
 
 ## MCP Resources
 

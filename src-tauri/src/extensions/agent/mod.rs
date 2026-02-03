@@ -1,101 +1,93 @@
-//! Agent Extension
+//! Agent Extension (Phase 2 — External AI Tool Integration)
 //!
-//! AI assistant integration for Elfiee.
+//! AI assistant integration for Elfiee via external tools (Claude Code, etc.).
 //!
 //! ## Architecture
 //!
-//! ### Phase 1 (LLM Direct)
-//! - `agent_create` - Create Agent Block with Editor
-//! - `agent_configure` - Configure Agent settings
-//! - `agent_invoke` - Invoke LLM and generate Proposal (future)
-//! - `agent_approve` - Approve and execute Proposal (future)
+//! Each Agent binds to an AI tool config directory path (e.g. `.claude/`, `.cursor/`).
+//! Each Agent has its own MCP server on a dedicated port for correct identity routing.
 //!
-//! ### Phase 2 (External AI Tool Integration)
-//! - `agent.create` - Create Agent Block for external project + auto-enable
-//! - `agent.enable` - Enable agent: create symlink + inject MCP config
-//! - `agent.disable` - Disable agent: clean symlink + remove MCP config
+//! ## Capabilities
+//!
+//! - `agent.create` - Create Agent Block bound to an AI tool config directory
+//! - `agent.enable` - Enable agent: create symlink + inject MCP config + start MCP server
+//! - `agent.disable` - Disable agent: clean symlink + remove MCP config + stop MCP server
+//!
+//! ## Architecture Note
+//!
+//! Capability handlers only update block state (pure). Actual I/O operations
+//! (symlink creation, MCP config injection/removal, MCP server start/stop)
+//! are performed by the Tauri command layer in `commands/agent.rs`.
 //!
 //! ## Payload Types
 //!
-//! ### Phase 1
-//! - `AgentCreatePayload` - Parameters for agent.create (LLM mode)
-//! - `AgentConfigurePayload` - Parameters for agent.configure
-//! - `AgentInvokePayload` - Parameters for agent.invoke
-//! - `AgentApprovePayload` - Parameters for agent.approve
-//!
-//! ### Phase 2
-//! - `AgentCreateV2Payload` - Parameters for agent.create (project integration mode)
+//! - `AgentCreatePayload` - Parameters for agent.create
 //! - `AgentEnablePayload` - Parameters for agent.enable
 //! - `AgentDisablePayload` - Parameters for agent.disable
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-pub mod agent_configure;
 pub mod agent_create;
 pub mod agent_disable;
 pub mod agent_enable;
-pub mod context;
-pub mod llm;
 
 // Re-export capability handlers for registration
-pub use agent_configure::*;
 pub use agent_create::*;
 pub use agent_disable::*;
 pub use agent_enable::*;
 
-// --- Core Types ---
+// --- Agent Block Contents ---
 
-/// Agent configuration stored in Block.contents
+/// Agent Block contents, storing per-AI-tool integration config.
+///
+/// Stored in `Block.contents`.
+///
+/// Key change from V1: binds to `config_dir` (absolute path) instead of Dir Block ID.
+/// `editor_id` is now required (not optional).
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct AgentConfig {
-    /// Associated Editor ID for the agent (format: "agent-{uuid}")
-    pub editor_id: String,
-    /// LLM provider (e.g., "anthropic", "openai")
+pub struct AgentContents {
+    /// Agent display name (default: "elfiee")
+    pub name: String,
+
+    /// AI tool provider identifier.
+    ///
+    /// Examples: "claude_code", "cursor", "windsurf"
+    /// Used to determine provider-specific behavior (symlink paths, MCP config format, etc.)
+    #[serde(default = "default_provider")]
     pub provider: String,
-    /// Model name (e.g., "claude-sonnet-4-20250514")
-    pub model: String,
-    /// Environment variable name for API key
-    pub api_key_env: String,
-    /// System prompt for the agent
-    pub system_prompt: String,
+
+    /// Absolute path to the AI tool's config directory this agent is bound to.
+    ///
+    /// Examples:
+    /// - Claude Code: "/home/user/repo-a/.claude"
+    /// - Cursor: "/home/user/repo-a/.cursor"
+    ///
+    /// Used to derive:
+    /// - Symlink target: `{config_dir}/skills/elfiee-client/`
+    /// - MCP config locations: `{config_dir.parent()}/.mcp.json` + `{config_dir}/mcp.json`
+    pub config_dir: String,
+
+    /// Agent current status
+    pub status: AgentStatus,
+
+    /// Bot editor_id associated with this agent (required).
+    /// Used by per-agent MCP server to attribute operations to the correct identity.
+    pub editor_id: String,
 }
 
-/// A proposed command from LLM output
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct ProposedCommand {
-    /// Capability ID (e.g., "code.write", "terminal.execute")
-    pub cap_id: String,
-    /// Target block ID
-    pub block_id: String,
-    /// Command payload
-    pub payload: serde_json::Value,
-    /// Human-readable description
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+fn default_provider() -> String {
+    "claude_code".to_string()
 }
 
-/// Proposal status
+/// Agent enable/disable status
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum ProposalStatus {
-    Pending,
-    Approved,
-    Rejected,
-}
-
-/// Proposal structure stored in Event.value
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct Proposal {
-    /// List of proposed commands
-    pub proposed_commands: Vec<ProposedCommand>,
-    /// Current status
-    pub status: ProposalStatus,
-    /// Original user prompt
-    pub prompt: String,
-    /// Raw LLM response (for debugging)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub raw_response: Option<String>,
+pub enum AgentStatus {
+    /// Enabled: symlink exists, MCP config injected, MCP server running
+    Enabled,
+    /// Disabled: symlink cleaned, MCP config removed, MCP server stopped
+    Disabled,
 }
 
 // --- Payload Types ---
@@ -103,105 +95,19 @@ pub struct Proposal {
 /// Payload for agent.create capability
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct AgentCreatePayload {
-    /// Agent display name
-    pub name: String,
-    /// LLM provider
-    pub provider: String,
-    /// Model name
-    pub model: String,
-    /// Environment variable name for API key
-    pub api_key_env: String,
-    /// System prompt
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-}
-
-/// Payload for agent.configure capability
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct AgentConfigurePayload {
-    /// Optional: Update provider
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    /// Optional: Update model
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    /// Optional: Update API key env var
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_env: Option<String>,
-    /// Optional: Update system prompt
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-}
-
-/// Payload for agent.invoke capability
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct AgentInvokePayload {
-    /// User prompt/message
-    pub prompt: String,
-    /// Optional: Max tokens for context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_context_tokens: Option<u32>,
-    /// Optional: Related block IDs for context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_block_ids: Option<Vec<String>>,
-}
-
-/// Payload for agent.approve capability
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct AgentApprovePayload {
-    /// Event ID of the Proposal to approve
-    pub proposal_event_id: String,
-    /// Approve or reject
-    pub approved: bool,
-}
-
-// --- Phase 2 Types (External AI Tool Integration) ---
-
-/// Phase 2 Agent Block contents, storing project-level AI integration config.
-///
-/// Coexists with Phase 1's `AgentConfig` (LLM direct call config).
-/// Stored in `Block.contents`.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct AgentContents {
-    /// Agent display name (default: "elfiee")
-    pub name: String,
-
-    /// Associated external project Dir Block ID.
-    ///
-    /// Used to look up the Dir Block in StateProjector,
-    /// then get the physical path from `metadata.custom["external_root_path"]`.
-    pub target_project_id: String,
-
-    /// Agent current status
-    pub status: AgentStatus,
-
-    /// Bot editor_id associated with this agent.
-    /// Used by MCP server to attribute operations to the correct identity.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub editor_id: Option<String>,
-}
-
-/// Agent enable/disable status
-#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum AgentStatus {
-    /// Enabled: symlink exists, MCP config injected
-    Enabled,
-    /// Disabled: symlink cleaned, MCP config removed
-    Disabled,
-}
-
-/// Payload for Phase 2 agent.create capability
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct AgentCreateV2Payload {
     /// Agent display name (optional, default: "elfiee")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
-    /// Associated external project Dir Block ID (required)
-    pub target_project_id: String,
+    /// AI tool provider identifier (optional, default: "claude_code")
+    #[serde(default = "default_provider")]
+    pub provider: String,
 
-    /// Bot editor_id to associate with this agent
+    /// Absolute path to the AI tool's config directory (required)
+    pub config_dir: String,
+
+    /// Bot editor_id to associate with this agent.
+    /// If not provided, the command layer auto-creates a bot editor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor_id: Option<String>,
 }
@@ -219,6 +125,8 @@ pub struct AgentDisablePayload {
     /// Agent Block ID (required)
     pub agent_block_id: String,
 }
+
+// --- Result Types ---
 
 /// Result type for agent.create Tauri command
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

@@ -1,37 +1,44 @@
-//! Handler for agent.create capability (Phase 2)
+//! Handler for agent.create capability
 //!
-//! Creates an Agent Block for external project integration.
-//! The handler generates the Block creation event; actual I/O (symlink, MCP config)
-//! is performed by the Tauri command layer.
+//! Creates an Agent Block bound to a `.claude/` directory.
+//! The handler generates the Block creation event; actual I/O (symlink, MCP config,
+//! MCP server start) is performed by the Tauri command layer.
 
 use crate::capabilities::core::{create_event, CapResult};
 use crate::models::{Block, BlockMetadata, Command, Event};
 use capability_macros::capability;
 
-use super::{AgentContents, AgentCreateV2Payload, AgentStatus};
+use super::{AgentContents, AgentCreatePayload, AgentStatus};
 
-/// Handler for agent.create capability (Phase 2).
+/// Handler for agent.create capability.
 ///
-/// Creates an Agent Block for external project integration:
-/// 1. Validates the payload (target_project_id required)
+/// Creates an Agent Block bound to a `.claude/` directory:
+/// 1. Validates the payload (config_dir and editor_id required)
 /// 2. Creates an Agent Block with AgentContents in contents
 /// 3. Sets initial status to Enabled (Tauri command will perform I/O)
 ///
 /// # Payload
-/// Uses `AgentCreateV2Payload` with target_project_id (required) and name (optional).
+/// Uses `AgentCreatePayload` with config_dir (required), editor_id (required
+/// at handler level — command layer auto-creates if not provided by user),
+/// and name (optional).
 ///
 /// # Note
-/// Uniqueness check (no duplicate agent for same project) and target project validation
+/// Uniqueness check (no duplicate agent for same config_dir) and .claude/ validation
 /// are performed at the Tauri command layer, since the handler cannot access StateProjector.
 #[capability(id = "agent.create", target = "core/*")]
 fn handle_agent_create(cmd: &Command, _block: Option<&Block>) -> CapResult<Vec<Event>> {
-    let payload: AgentCreateV2Payload = serde_json::from_value(cmd.payload.clone())
+    let payload: AgentCreatePayload = serde_json::from_value(cmd.payload.clone())
         .map_err(|e| format!("Invalid payload for agent.create: {}", e))?;
 
     // Validate required fields
-    if payload.target_project_id.trim().is_empty() {
-        return Err("target_project_id cannot be empty".to_string());
+    if payload.config_dir.trim().is_empty() {
+        return Err("config_dir cannot be empty".to_string());
     }
+
+    let editor_id = payload
+        .editor_id
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| "editor_id is required for agent.create".to_string())?;
 
     let name = payload
         .name
@@ -41,9 +48,10 @@ fn handle_agent_create(cmd: &Command, _block: Option<&Block>) -> CapResult<Vec<E
     // Create AgentContents
     let contents = AgentContents {
         name: name.clone(),
-        target_project_id: payload.target_project_id.clone(),
+        provider: payload.provider.clone(),
+        config_dir: payload.config_dir.clone(),
         status: AgentStatus::Enabled,
-        editor_id: payload.editor_id.clone(),
+        editor_id,
     };
 
     // Generate block_id for the new Agent Block
@@ -84,13 +92,14 @@ mod tests {
     use crate::models::Command;
 
     #[test]
-    fn test_agent_create_v2_success() {
+    fn test_agent_create_success() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "target_project_id": "dir-block-uuid-123"
+                "config_dir": "/home/user/repo-a/.claude",
+                "editor_id": "bot-editor-123"
             }),
         );
 
@@ -108,19 +117,21 @@ mod tests {
         // Verify contents has AgentContents fields
         let contents = &event.value["contents"];
         assert_eq!(contents["name"], "elfiee");
-        assert_eq!(contents["target_project_id"], "dir-block-uuid-123");
+        assert_eq!(contents["config_dir"], "/home/user/repo-a/.claude");
         assert_eq!(contents["status"], "enabled");
+        assert_eq!(contents["editor_id"], "bot-editor-123");
         assert_eq!(contents["source"], "outline");
     }
 
     #[test]
-    fn test_agent_create_v2_with_custom_name() {
+    fn test_agent_create_with_custom_name() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "target_project_id": "dir-block-uuid-123",
+                "config_dir": "/home/user/repo-a/.claude",
+                "editor_id": "bot-editor-123",
                 "name": "my-agent"
             }),
         );
@@ -135,13 +146,14 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_create_v2_default_name_when_none() {
+    fn test_agent_create_default_name_when_none() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "target_project_id": "dir-block-uuid-123"
+                "config_dir": "/home/user/repo-a/.claude",
+                "editor_id": "bot-editor-123"
             }),
         );
 
@@ -150,13 +162,14 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_create_v2_empty_name_uses_default() {
+    fn test_agent_create_empty_name_uses_default() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "target_project_id": "dir-block-uuid-123",
+                "config_dir": "/home/user/repo-a/.claude",
+                "editor_id": "bot-editor-123",
                 "name": "  "
             }),
         );
@@ -166,31 +179,31 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_create_v2_empty_target_project_id_fails() {
+    fn test_agent_create_empty_config_dir_fails() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "target_project_id": "  "
+                "config_dir": "  ",
+                "editor_id": "bot-editor-123"
             }),
         );
 
         let result = handle_agent_create(&cmd, None);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("target_project_id cannot be empty"));
+        assert!(result.unwrap_err().contains("config_dir cannot be empty"));
     }
 
     #[test]
-    fn test_agent_create_v2_missing_target_project_id_fails() {
+    fn test_agent_create_missing_config_dir_fails() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "name": "my-agent"
+                "name": "my-agent",
+                "editor_id": "bot-editor-123"
             }),
         );
 
@@ -200,13 +213,47 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_create_v2_event_structure() {
+    fn test_agent_create_missing_editor_id_fails() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "target_project_id": "proj-123"
+                "config_dir": "/home/user/repo-a/.claude"
+            }),
+        );
+
+        let result = handle_agent_create(&cmd, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("editor_id is required"));
+    }
+
+    #[test]
+    fn test_agent_create_empty_editor_id_fails() {
+        let cmd = Command::new(
+            "alice".to_string(),
+            "agent.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "config_dir": "/home/user/repo-a/.claude",
+                "editor_id": "  "
+            }),
+        );
+
+        let result = handle_agent_create(&cmd, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("editor_id is required"));
+    }
+
+    #[test]
+    fn test_agent_create_event_structure() {
+        let cmd = Command::new(
+            "alice".to_string(),
+            "agent.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "config_dir": "/home/user/repo-a/.claude",
+                "editor_id": "bot-editor-123"
             }),
         );
 
@@ -236,13 +283,14 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_create_v2_generates_unique_block_ids() {
+    fn test_agent_create_generates_unique_block_ids() {
         let cmd1 = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "target_project_id": "proj-1"
+                "config_dir": "/home/user/repo-a/.claude",
+                "editor_id": "bot-1"
             }),
         );
 
@@ -251,7 +299,8 @@ mod tests {
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "target_project_id": "proj-2"
+                "config_dir": "/home/user/repo-b/.claude",
+                "editor_id": "bot-2"
             }),
         );
 
@@ -262,56 +311,18 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_create_v2_initial_status_is_enabled() {
+    fn test_agent_create_initial_status_is_enabled() {
         let cmd = Command::new(
             "alice".to_string(),
             "agent.create".to_string(),
             "".to_string(),
             serde_json::json!({
-                "target_project_id": "proj-123"
+                "config_dir": "/home/user/repo-a/.claude",
+                "editor_id": "bot-editor-123"
             }),
         );
 
         let result = handle_agent_create(&cmd, None).unwrap();
         assert_eq!(result[0].value["contents"]["status"], "enabled");
-    }
-
-    #[test]
-    fn test_agent_create_v2_with_editor_id() {
-        let cmd = Command::new(
-            "alice".to_string(),
-            "agent.create".to_string(),
-            "".to_string(),
-            serde_json::json!({
-                "target_project_id": "proj-123",
-                "editor_id": "bot-editor-abc"
-            }),
-        );
-
-        let result = handle_agent_create(&cmd, None).unwrap();
-        assert_eq!(result[0].value["contents"]["editor_id"], "bot-editor-abc");
-    }
-
-    #[test]
-    fn test_agent_create_v2_without_editor_id() {
-        let cmd = Command::new(
-            "alice".to_string(),
-            "agent.create".to_string(),
-            "".to_string(),
-            serde_json::json!({
-                "target_project_id": "proj-123"
-            }),
-        );
-
-        let result = handle_agent_create(&cmd, None).unwrap();
-        // editor_id should be omitted when None (skip_serializing_if)
-        assert!(
-            result[0].value["contents"]
-                .as_object()
-                .unwrap()
-                .get("editor_id")
-                .is_none()
-                || result[0].value["contents"]["editor_id"].is_null()
-        );
     }
 }

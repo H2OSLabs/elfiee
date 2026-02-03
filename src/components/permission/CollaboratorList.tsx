@@ -1,6 +1,17 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import { UserPlus, Users } from 'lucide-react'
+import { FolderOpen, UserPlus, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { open } from '@tauri-apps/plugin-dialog'
 import { useAppStore } from '@/lib/app-store'
 import { CollaboratorItem } from './CollaboratorItem'
 import { AddCollaboratorDialog } from './AddCollaboratorDialog'
@@ -19,6 +30,12 @@ export const CollaboratorList = ({
   block,
 }: CollaboratorListProps) => {
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [agentConfigDialog, setAgentConfigDialog] = useState<{
+    open: boolean
+    editorId: string
+    editorName: string
+    configDir: string
+  }>({ open: false, editorId: '', editorName: '', configDir: '' })
 
   // Subscribe to store state changes
   const editors = useAppStore((state) => {
@@ -46,6 +63,9 @@ export const CollaboratorList = ({
   const createAgent = useAppStore((state) => state.createAgent)
   const enableAgent = useAppStore((state) => state.enableAgent)
   const disableAgent = useAppStore((state) => state.disableAgent)
+  const isGlobalCollaborator = useAppStore(
+    (state) => state.isGlobalCollaborator
+  )
 
   // Filter agent blocks for matching bot editors to their agent blocks
   const agentBlocks = useMemo(
@@ -53,30 +73,47 @@ export const CollaboratorList = ({
     [blocks]
   )
 
-  // Find the agent block associated with a bot editor
+  // Find the agent block associated with a bot editor (matched by editor_id)
   const findAgentBlockForEditor = useCallback(
     (editor: Editor): Block | undefined => {
       if (editor.editor_type !== 'Bot') return undefined
       return agentBlocks.find((block) => {
         const contents = block.contents as AgentContents | undefined
-        return (
-          contents?.name === editor.name &&
-          contents?.target_project_id === blockId
-        )
+        return contents?.editor_id === editor.editor_id
       })
     },
-    [agentBlocks, blockId]
+    [agentBlocks]
   )
 
   // Handler for creating an agent for a bot editor (when no agent block exists yet)
+  // Opens a dialog to collect config_dir before calling createAgent
   const handleCreateAgent = useCallback(
     async (editorId: string) => {
       const editor = editors.find((e) => e.editor_id === editorId)
       if (!editor) return
-      await createAgent(fileId, blockId, editor.name, editor.editor_id)
+      setAgentConfigDialog({
+        open: true,
+        editorId: editor.editor_id,
+        editorName: editor.name,
+        configDir: '',
+      })
     },
-    [fileId, blockId, editors, createAgent]
+    [editors]
   )
+
+  const handleAgentConfigSubmit = useCallback(async () => {
+    const { editorId, editorName, configDir } = agentConfigDialog
+    if (!configDir.trim()) {
+      toast.error('Config directory path is required')
+      return
+    }
+    try {
+      await createAgent(fileId, configDir.trim(), editorName, editorId)
+      setAgentConfigDialog((prev) => ({ ...prev, open: false }))
+    } catch {
+      // Error toast is handled by createAgent in app-store
+    }
+  }, [fileId, agentConfigDialog, createAgent])
 
   // Handler for toggling agent enable/disable status
   const handleToggleAgentStatus = useCallback(
@@ -322,6 +359,7 @@ export const CollaboratorList = ({
             )}
             isOwner={editor.editor_id === block.owner}
             isActive={editor.editor_id === activeEditor?.editor_id}
+            isGlobal={isGlobalCollaborator(fileId, editor.editor_id)}
             onGrantChange={handleGrantChange}
             onRemoveAccess={handleRemoveAccess}
             agentBlock={findAgentBlockForEditor(editor)}
@@ -342,6 +380,92 @@ export const CollaboratorList = ({
         onOpenChange={setShowAddDialog}
         onSuccess={handleAddSuccess}
       />
+
+      {/* Agent Config Dialog — prompts for config_dir when creating an agent */}
+      <Dialog
+        open={agentConfigDialog.open}
+        onOpenChange={(open) =>
+          setAgentConfigDialog((prev) => ({ ...prev, open }))
+        }
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Configure Agent</DialogTitle>
+            <DialogDescription>
+              Select the AI tool config directory for{' '}
+              <strong>{agentConfigDialog.editorName}</strong> (e.g.{' '}
+              <code>.claude</code> folder in your project).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="agent-config-dir">Config Directory</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="agent-config-dir"
+                  placeholder="/path/to/project/.claude"
+                  value={agentConfigDialog.configDir}
+                  onChange={(e) =>
+                    setAgentConfigDialog((prev) => ({
+                      ...prev,
+                      configDir: e.target.value,
+                    }))
+                  }
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === 'Enter' &&
+                      agentConfigDialog.configDir.trim()
+                    ) {
+                      handleAgentConfigSubmit()
+                    }
+                  }}
+                  className="flex-1"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  title="Browse..."
+                  onClick={async () => {
+                    try {
+                      const selected = await open({
+                        directory: true,
+                        multiple: false,
+                        title: `Select config directory for ${agentConfigDialog.editorName}`,
+                      })
+                      if (selected && typeof selected === 'string') {
+                        setAgentConfigDialog((prev) => ({
+                          ...prev,
+                          configDir: selected,
+                        }))
+                      }
+                    } catch {
+                      // User cancelled the dialog
+                    }
+                  }}
+                >
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setAgentConfigDialog((prev) => ({ ...prev, open: false }))
+              }
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAgentConfigSubmit}
+              disabled={!agentConfigDialog.configDir.trim()}
+            >
+              Create Agent
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

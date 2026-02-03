@@ -476,7 +476,8 @@ describe('CollaboratorItem Component', () => {
       owner: 'owner-123',
       contents: {
         name: 'CodeReviewer',
-        target_project_id: 'dir-block-1',
+        config_dir: '/home/user/repo/.claude',
+        editor_id: 'bot-456',
         status: 'enabled',
       },
       children: {},
@@ -580,7 +581,8 @@ describe('CollaboratorItem Component', () => {
         ...mockAgentBlock,
         contents: {
           name: 'CodeReviewer',
-          target_project_id: 'dir-block-1',
+          config_dir: '/home/user/repo/.claude',
+          editor_id: 'bot-456',
           status: 'disabled',
         },
       }

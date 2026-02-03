@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { UserPlus, User, Bot } from 'lucide-react'
+import { Globe, User, Bot, FolderOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -20,125 +20,64 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { useAppStore } from '@/lib/app-store'
-import type { Editor } from '@/bindings'
 import { toast } from 'sonner'
 
-interface AddCollaboratorDialogProps {
+interface GlobalCollaboratorDialogProps {
   fileId: string
-  blockId: string
-  blockType: string // Block type to determine default permission
-  existingEditors: Editor[] // Editors who already have access to this block
-  allEditors: Editor[] // All editors in the file system
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSuccess?: (editor: Editor) => void
 }
 
-// Get default read permission based on block type
-const getDefaultReadPermission = (blockType: string): string => {
-  if (blockType === 'code') return 'code.read'
-  if (blockType === 'directory') return 'directory.read'
-  if (blockType === 'task') return 'task.read'
-  return 'markdown.read' // Default for markdown and other types
-}
-
-// Get default write permission based on block type
-const getDefaultWritePermission = (blockType: string): string => {
-  if (blockType === 'code') return 'code.write'
-  if (blockType === 'directory') return 'directory.write'
-  if (blockType === 'task') return 'task.write'
-  return 'markdown.write' // Default for markdown and other types
-}
-
-export const AddCollaboratorDialog = ({
+export const GlobalCollaboratorDialog = ({
   fileId,
-  blockId,
-  blockType,
-  existingEditors,
-  allEditors,
   open,
   onOpenChange,
-  onSuccess,
-}: AddCollaboratorDialogProps) => {
-  const { createEditor, grantCapability, getActiveEditor } = useAppStore()
+}: GlobalCollaboratorDialogProps) => {
+  const {
+    getEditors,
+    createEditor,
+    addGlobalCollaborator,
+    isGlobalCollaborator,
+    createAgent,
+  } = useAppStore()
+
   const [activeTab, setActiveTab] = useState<'existing' | 'new'>('existing')
-
-  // Existing User State
   const [selectedEditorId, setSelectedEditorId] = useState<string>('')
-
-  // New User State
   const [newEditorName, setNewEditorName] = useState('')
   const [newEditorType, setNewEditorType] = useState<'Human' | 'Bot'>('Human')
-
+  const [configDir, setConfigDir] = useState('')
+  const [provider, setProvider] = useState('claude_code')
   const [isProcessing, setIsProcessing] = useState(false)
 
-  // Filter: Available editors are those in the file system but NOT in the existing list for this block
-  const availableEditors = useMemo(() => {
-    const existingIds = new Set(existingEditors.map((e) => e.editor_id))
-    return allEditors.filter((e) => !existingIds.has(e.editor_id))
-  }, [allEditors, existingEditors])
+  const allEditors = getEditors(fileId)
 
-  // Reset form when dialog opens/closes
-  const handleOpenChange = (open: boolean) => {
-    if (!open) {
+  // Filter: only show editors that are NOT already global collaborators
+  const availableEditors = useMemo(() => {
+    return allEditors.filter((e) => !isGlobalCollaborator(fileId, e.editor_id))
+  }, [allEditors, fileId, isGlobalCollaborator])
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
       setSelectedEditorId('')
       setNewEditorName('')
       setNewEditorType('Human')
+      setConfigDir('')
+      setProvider('claude_code')
       setActiveTab('existing')
     }
-    onOpenChange(open)
+    onOpenChange(nextOpen)
   }
 
   const handleAddExisting = async () => {
     if (!selectedEditorId) return
-    const selectedEditor = availableEditors.find(
-      (e) => e.editor_id === selectedEditorId
-    )
-    if (!selectedEditor) return
 
     setIsProcessing(true)
     try {
-      // Grant permissions: core.read + type-specific read permission
-      // core.read allows viewing metadata/events/grants
-      // type-specific read allows viewing block content
-      const defaultPermission = getDefaultReadPermission(blockType)
-      const granterId = getActiveEditor(fileId)?.editor_id
-
-      // Grant core.read first
-      await grantCapability(
-        fileId,
-        selectedEditor.editor_id,
-        'core.read',
-        blockId,
-        granterId
-      )
-
-      // Grant type-specific read permission
-      await grantCapability(
-        fileId,
-        selectedEditor.editor_id,
-        defaultPermission,
-        blockId,
-        granterId
-      )
-
-      // Grant type-specific write permission
-      const defaultWritePermission = getDefaultWritePermission(blockType)
-      await grantCapability(
-        fileId,
-        selectedEditor.editor_id,
-        defaultWritePermission,
-        blockId,
-        granterId
-      )
-
-      toast.success(`Added ${selectedEditor.name} to collaborators`)
-      onSuccess?.(selectedEditor)
+      await addGlobalCollaborator(fileId, selectedEditorId)
       handleOpenChange(false)
     } catch (error) {
-      // Backend validation errors (e.g. permission denied) will be caught here
-      // toast error is already handled in app-store but we can log it
       console.error(error)
     } finally {
       setIsProcessing(false)
@@ -147,53 +86,33 @@ export const AddCollaboratorDialog = ({
 
   const handleCreateNew = async () => {
     if (!newEditorName.trim()) return
+    if (newEditorType === 'Bot' && !configDir.trim()) {
+      toast.error('Config directory is required for Bot type')
+      return
+    }
 
     setIsProcessing(true)
     try {
-      // 1. Create the editor
       const newEditor = await createEditor(
         fileId,
         newEditorName.trim(),
         newEditorType
       )
+      await addGlobalCollaborator(fileId, newEditor.editor_id)
 
-      // 2. Grant permissions: core.read + type-specific read permission
-      const defaultPermission = getDefaultReadPermission(blockType)
-      const granterId = getActiveEditor(fileId)?.editor_id
+      // For Bot editors, also create the agent block
+      if (newEditorType === 'Bot') {
+        await createAgent(
+          fileId,
+          configDir.trim(),
+          newEditorName.trim(),
+          newEditor.editor_id,
+          provider
+        )
+      }
 
-      // Grant core.read first
-      await grantCapability(
-        fileId,
-        newEditor.editor_id,
-        'core.read',
-        blockId,
-        granterId
-      )
-
-      // Grant type-specific read permission
-      await grantCapability(
-        fileId,
-        newEditor.editor_id,
-        defaultPermission,
-        blockId,
-        granterId
-      )
-
-      // Grant type-specific write permission
-      const defaultWritePermission = getDefaultWritePermission(blockType)
-      await grantCapability(
-        fileId,
-        newEditor.editor_id,
-        defaultWritePermission,
-        blockId,
-        granterId
-      )
-
-      toast.success(`Created and added ${newEditor.name}`)
-      onSuccess?.(newEditor)
       handleOpenChange(false)
     } catch (error) {
-      // Backend validation errors will be displayed by app-store toast
       console.error(error)
     } finally {
       setIsProcessing(false)
@@ -205,12 +124,12 @@ export const AddCollaboratorDialog = ({
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <UserPlus className="h-5 w-5" />
-            Add Collaborator
+            <Globe className="h-5 w-5" />
+            Add Global Collaborator
           </DialogTitle>
           <DialogDescription>
-            Grant access to an existing user or create a new collaborator
-            identity.
+            Grant wildcard permissions on all blocks. The collaborator can still
+            be restricted per-block via revoke.
           </DialogDescription>
         </DialogHeader>
 
@@ -237,14 +156,14 @@ export const AddCollaboratorDialog = ({
           <div className="py-4">
             <TabsContent value="existing" className="mt-0 space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="editor-select">Select User</Label>
+                <Label htmlFor="global-editor-select">Select User</Label>
                 {availableEditors.length === 0 ? (
                   <div className="flex flex-col items-center justify-center rounded-md border border-dashed p-4 text-center">
                     <p className="text-sm text-muted-foreground">
-                      No other users available.
+                      No users available.
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground/70">
-                      Everyone in this file already has access.
+                      All editors already have global access.
                     </p>
                   </div>
                 ) : (
@@ -253,7 +172,7 @@ export const AddCollaboratorDialog = ({
                     onValueChange={setSelectedEditorId}
                     disabled={isProcessing}
                   >
-                    <SelectTrigger id="editor-select">
+                    <SelectTrigger id="global-editor-select">
                       <SelectValue placeholder="Choose a user..." />
                     </SelectTrigger>
                     <SelectContent>
@@ -280,9 +199,9 @@ export const AddCollaboratorDialog = ({
 
             <TabsContent value="new" className="mt-0 space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
+                <Label htmlFor="global-name">Name</Label>
                 <Input
-                  id="name"
+                  id="global-name"
                   placeholder="e.g. Alice, ReviewerBot"
                   value={newEditorName}
                   onChange={(e) => setNewEditorName(e.target.value)}
@@ -308,9 +227,9 @@ export const AddCollaboratorDialog = ({
                   disabled={isProcessing}
                 >
                   <div className="flex items-center space-x-2 rounded-md border p-2 hover:bg-muted/50">
-                    <RadioGroupItem value="Human" id="r-human" />
+                    <RadioGroupItem value="Human" id="global-r-human" />
                     <Label
-                      htmlFor="r-human"
+                      htmlFor="global-r-human"
                       className="flex cursor-pointer items-center gap-1.5 font-normal"
                     >
                       <User className="h-4 w-4 text-blue-500" />
@@ -318,9 +237,9 @@ export const AddCollaboratorDialog = ({
                     </Label>
                   </div>
                   <div className="flex items-center space-x-2 rounded-md border p-2 hover:bg-muted/50">
-                    <RadioGroupItem value="Bot" id="r-bot" />
+                    <RadioGroupItem value="Bot" id="global-r-bot" />
                     <Label
-                      htmlFor="r-bot"
+                      htmlFor="global-r-bot"
                       className="flex cursor-pointer items-center gap-1.5 font-normal"
                     >
                       <Bot className="h-4 w-4 text-purple-500" />
@@ -329,6 +248,69 @@ export const AddCollaboratorDialog = ({
                   </div>
                 </RadioGroup>
               </div>
+
+              {/* Bot-specific fields: config_dir + provider */}
+              {newEditorType === 'Bot' && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="global-config-dir">Config Directory</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="global-config-dir"
+                        placeholder="/path/to/project/.claude"
+                        value={configDir}
+                        onChange={(e) => setConfigDir(e.target.value)}
+                        disabled={isProcessing}
+                        className="flex-1"
+                      />
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        title="Browse..."
+                        disabled={isProcessing}
+                        onClick={async () => {
+                          try {
+                            const selected = await openDialog({
+                              directory: true,
+                              multiple: false,
+                              title: 'Select AI tool config directory',
+                            })
+                            if (selected && typeof selected === 'string') {
+                              setConfigDir(selected)
+                            }
+                          } catch {
+                            // User cancelled
+                          }
+                        }}
+                      >
+                        <FolderOpen className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Path to the AI tool&apos;s config directory (e.g.{' '}
+                      <code className="rounded bg-muted px-1">.claude</code>,{' '}
+                      <code className="rounded bg-muted px-1">.cursor</code>)
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="global-provider">Provider</Label>
+                    <Select
+                      value={provider}
+                      onValueChange={setProvider}
+                      disabled={isProcessing}
+                    >
+                      <SelectTrigger id="global-provider">
+                        <SelectValue placeholder="Select provider" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="claude_code">Claude Code</SelectItem>
+                        <SelectItem value="cursor">Cursor</SelectItem>
+                        <SelectItem value="windsurf">Windsurf</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
             </TabsContent>
           </div>
         </Tabs>
@@ -351,7 +333,8 @@ export const AddCollaboratorDialog = ({
               isProcessing ||
               (activeTab === 'existing'
                 ? !selectedEditorId
-                : !newEditorName.trim())
+                : !newEditorName.trim() ||
+                  (newEditorType === 'Bot' && !configDir.trim()))
             }
           >
             {isProcessing ? (
@@ -360,9 +343,9 @@ export const AddCollaboratorDialog = ({
                 {activeTab === 'existing' ? 'Adding...' : 'Creating...'}
               </>
             ) : activeTab === 'existing' ? (
-              'Add'
+              'Add as Global'
             ) : (
-              'Create & Add'
+              'Create & Add as Global'
             )}
           </Button>
         </DialogFooter>

@@ -33,6 +33,7 @@ interface CollaboratorItemProps {
   grants: Grant[]
   isOwner: boolean
   isActive: boolean
+  isGlobal?: boolean
   onGrantChange: (
     editorId: string,
     capability: string,
@@ -55,27 +56,40 @@ interface CollaboratorItemProps {
 //   - Directory: Represents directory.create, delete, rename, export capabilities
 // - Delete: core.delete (unified for all block types)
 const getAvailableCapabilities = (blockType: string) => {
-  if (blockType === 'code') {
-    return [
-      { id: 'code.read', label: 'Read', icon: BookOpen },
-      { id: 'code.write', label: 'Write', icon: Edit2 },
-      { id: 'core.delete', label: 'Delete', icon: Trash2 },
-    ]
-  } else if (blockType === 'directory') {
-    return [
-      { id: 'directory.read', label: 'Read', icon: BookOpen },
-      // Directory Write represents directory.create, directory.delete, directory.rename, directory.export
-      // Frontend shows as "Write" but backend checks these individual capabilities
-      { id: 'directory.write', label: 'Write', icon: Edit2 },
-      { id: 'core.delete', label: 'Delete', icon: Trash2 },
-    ]
-  } else {
-    // markdown and other types default to markdown capabilities
-    return [
-      { id: 'markdown.read', label: 'Read', icon: BookOpen },
-      { id: 'markdown.write', label: 'Write', icon: Edit2 },
-      { id: 'core.delete', label: 'Delete', icon: Trash2 },
-    ]
+  switch (blockType) {
+    case 'code':
+      return [
+        { id: 'code.read', label: 'Read', icon: BookOpen },
+        { id: 'code.write', label: 'Write', icon: Edit2 },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
+    case 'directory':
+      return [
+        { id: 'directory.read', label: 'Read', icon: BookOpen },
+        // Directory Write represents directory.create, directory.delete, directory.rename, directory.export
+        // Frontend shows as "Write" but backend checks these individual capabilities
+        { id: 'directory.write', label: 'Write', icon: Edit2 },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
+    case 'task':
+      return [
+        { id: 'task.read', label: 'Read', icon: BookOpen },
+        { id: 'task.write', label: 'Write', icon: Edit2 },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
+    case 'terminal':
+      return [
+        { id: 'terminal.execute', label: 'Execute', icon: Edit2 },
+        { id: 'terminal.save', label: 'Save', icon: BookOpen },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
+    default:
+      // markdown and other types default to markdown capabilities
+      return [
+        { id: 'markdown.read', label: 'Read', icon: BookOpen },
+        { id: 'markdown.write', label: 'Write', icon: Edit2 },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
   }
 }
 
@@ -86,6 +100,7 @@ export const CollaboratorItem = ({
   grants,
   isOwner,
   isActive,
+  isGlobal,
   onGrantChange,
   onRemoveAccess,
   agentBlock,
@@ -202,6 +217,14 @@ export const CollaboratorItem = ({
                   className="h-4 border-amber-200 bg-amber-100 px-1.5 text-[10px] text-amber-700 hover:bg-amber-100/80"
                 >
                   Owner
+                </Badge>
+              )}
+              {isGlobal && !isOwner && (
+                <Badge
+                  variant="secondary"
+                  className="h-4 border-blue-200 bg-blue-50 px-1.5 text-[10px] text-blue-600 hover:bg-blue-50/80"
+                >
+                  Global
                 </Badge>
               )}
               {isActive && !isOwner && (
@@ -374,11 +397,7 @@ export const CollaboratorItem = ({
         open={showConfigDialog}
         onOpenChange={setShowConfigDialog}
         botName={editor.name}
-        onSave={async (config) => {
-          console.log('Saving config:', config)
-          // TODO: Implement actual save logic
-          return Promise.resolve()
-        }}
+        agentBlock={agentBlock}
       />
     </div>
   )

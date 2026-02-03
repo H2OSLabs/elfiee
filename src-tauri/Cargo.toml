@@ -51,10 +51,6 @@ schemars = "1"
 async-trait = "0.1"
 tokio-util = "0.7"
 
-# Agent extension dependencies
-regex = "1.10"
-reqwest = { version = "0.12", features = ["json"] }
-
 # Windows junction support (no admin privileges needed for symlink-like dirs)
 [target.'cfg(windows)'.dependencies]
 junction = "1"

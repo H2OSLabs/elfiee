@@ -149,13 +149,33 @@ All state changes in Elfiee are performed through **Capabilities** — typed ope
 - **Target**: `terminal` blocks
 - **Params**: (none)
 
+## Task Capabilities
+
+### task.write
+- **Purpose**: Write markdown content to a task block
+- **Target**: `task` blocks
+- **Params**: `content` (string)
+- **Returns**: Event with new content
+
+### task.read
+- **Purpose**: Read content from a task block
+- **Target**: `task` blocks
+- **Params**: (none)
+- **Returns**: Event recording the read (entity = editor_id)
+
+### task.commit
+- **Purpose**: Commit a task — export linked blocks to git repos, create branch, commit
+- **Target**: `task` blocks
+- **Params**: (none)
+- **Returns**: Event with downstream_block_ids and commit metadata
+
 ## Agent Capabilities
 
 ### agent.create
-- **Purpose**: Create an Agent Block for an external project
+- **Purpose**: Create an Agent Block bound to a `.claude/` directory
 - **Target**: `core/*` (no existing block required)
-- **Params**: `target_project_id` (string), `name?` (string, default "elfiee")
-- **Returns**: Event with Agent Block initial state (auto-enabled)
+- **Params**: `claude_dir` (string — path to `.claude/` directory), `name?` (string, default "elfiee"), `editor_id?` (string — auto-created if omitted)
+- **Returns**: Event with Agent Block initial state (auto-enabled, per-agent MCP server started)
 
 ### agent.enable
 - **Purpose**: Enable an agent (create symlink + inject MCP config)

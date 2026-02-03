@@ -1,18 +1,22 @@
-//! Tauri commands for Agent operations (Phase 2)
+//! Tauri commands for Agent operations
 //!
 //! These commands handle the I/O layer for agent operations:
-//! - `agent_create`: Create Agent Block + auto-enable (symlink + MCP config)
+//! - `agent_create`: Create Agent Block bound to .claude/ dir + auto-enable
 //! - `agent_enable`: Re-enable agent (recreate symlink + MCP config)
 //! - `agent_disable`: Disable agent (clean symlink + remove MCP config)
+//!
+//! Business logic is in `do_*` functions, shared between Tauri commands,
+//! MCP server, and auto-disconnect handler (transport.rs).
 
 use crate::extensions::agent::{
-    AgentContents, AgentCreateResult, AgentCreateV2Payload, AgentDisableResult, AgentEnableResult,
+    AgentContents, AgentCreatePayload, AgentCreateResult, AgentDisableResult, AgentEnableResult,
     AgentStatus,
 };
 use crate::models::Command;
 use crate::state::AppState;
 use crate::utils::mcp_config;
 use std::path::Path;
+use std::sync::Arc;
 use tauri::State;
 
 /// Create symlink from source to destination (cross-platform).
@@ -88,22 +92,6 @@ fn remove_symlink_dir(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Get external path from a directory block's metadata.
-pub(crate) fn get_external_path(block: &crate::models::Block) -> Result<String, String> {
-    block
-        .metadata
-        .custom
-        .get("external_root_path")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| {
-            format!(
-                "Target project has no external path (block_id: {})",
-                block.block_id
-            )
-        })
-}
-
 /// Find the .elf/ directory block and return its _block_dir path.
 fn get_elf_block_dir(
     blocks: &std::collections::HashMap<String, crate::models::Block>,
@@ -119,40 +107,48 @@ fn get_elf_block_dir(
     None
 }
 
+/// Derive the project root path from a config_dir path.
+///
+/// config_dir = "/home/user/repo-a/.claude" → project_root = "/home/user/repo-a"
+fn get_project_root(config_dir: &str) -> Result<String, String> {
+    Path::new(config_dir)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| format!("Cannot derive project root from config_dir: {}", config_dir))
+}
+
 /// Perform enable I/O: create symlink + merge MCP config.
 ///
+/// `port` is the per-agent MCP server port used in the SSE URL.
+///
 /// Returns a list of warnings for partial failures.
-fn perform_enable_io(
-    external_path: &str,
-    elf_block_dir: &str,
-    elf_file_path: &str,
-) -> (bool, Vec<String>) {
+fn perform_enable_io(config_dir: &str, elf_block_dir: &str, port: u16) -> (bool, Vec<String>) {
     let mut warnings = Vec::new();
 
-    // 1. Create symlink: {external_path}/.claude/skills/elfiee-client/ -> {elf_block_dir}/Agents/elfiee-client/
+    // 1. Create symlink: {elf_block_dir}/agents/elfiee-client/ -> {config_dir}/skills/elfiee-client/
     let symlink_src = Path::new(elf_block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client");
-    let symlink_dst = Path::new(external_path)
-        .join(".claude")
-        .join("skills")
-        .join("elfiee-client");
+    let symlink_dst = Path::new(config_dir).join("skills").join("elfiee-client");
 
     if let Err(e) = create_symlink_dir(&symlink_src, &symlink_dst) {
         warnings.push(format!("Failed to create symlink: {}", e));
     }
 
-    // 2. Merge MCP config to both locations:
-    //    - .mcp.json (project root): Claude Code's project-scope path
-    //    - .claude/mcp.json: fallback for compatibility
-    let server_config = mcp_config::build_elfiee_server_config(elf_file_path);
+    // 2. Merge MCP config to both locations with the per-agent port:
+    //    - {project_root}/.mcp.json: Claude Code's project-scope path
+    //    - {config_dir}/mcp.json: fallback for compatibility
+    let server_config = mcp_config::build_elfiee_server_config(port);
 
-    let mcp_project_path = Path::new(external_path).join(".mcp.json");
+    let project_root = Path::new(config_dir)
+        .parent()
+        .unwrap_or(Path::new(config_dir));
+    let mcp_project_path = project_root.join(".mcp.json");
     if let Err(e) = mcp_config::merge_server(&mcp_project_path, "elfiee", server_config.clone()) {
         warnings.push(format!("Failed to write .mcp.json: {}", e));
     }
 
-    let mcp_claude_path = Path::new(external_path).join(".claude").join("mcp.json");
+    let mcp_claude_path = Path::new(config_dir).join("mcp.json");
     if let Err(e) = mcp_config::merge_server(&mcp_claude_path, "elfiee", server_config) {
         warnings.push(format!("Failed to write .claude/mcp.json: {}", e));
     }
@@ -164,26 +160,26 @@ fn perform_enable_io(
 /// Perform disable I/O: remove symlink + remove MCP config.
 ///
 /// Returns a list of warnings for partial failures.
-pub(crate) fn perform_disable_io(external_path: &str) -> Vec<String> {
+pub(crate) fn perform_disable_io(config_dir: &str) -> Vec<String> {
     let mut warnings = Vec::new();
 
     // 1. Remove symlink
-    let symlink_path = Path::new(external_path)
-        .join(".claude")
-        .join("skills")
-        .join("elfiee-client");
+    let symlink_path = Path::new(config_dir).join("skills").join("elfiee-client");
 
     if let Err(e) = remove_symlink_dir(&symlink_path) {
         warnings.push(format!("Failed to remove symlink: {}", e));
     }
 
     // 2. Remove MCP config entry from both locations
-    let mcp_project_path = Path::new(external_path).join(".mcp.json");
+    let project_root = Path::new(config_dir)
+        .parent()
+        .unwrap_or(Path::new(config_dir));
+    let mcp_project_path = project_root.join(".mcp.json");
     if let Err(e) = mcp_config::remove_server(&mcp_project_path, "elfiee") {
         warnings.push(format!("Failed to remove .mcp.json: {}", e));
     }
 
-    let mcp_claude_path = Path::new(external_path).join(".claude").join("mcp.json");
+    let mcp_claude_path = Path::new(config_dir).join("mcp.json");
     if let Err(e) = mcp_config::remove_server(&mcp_claude_path, "elfiee") {
         warnings.push(format!("Failed to remove .claude/mcp.json: {}", e));
     }
@@ -191,80 +187,79 @@ pub(crate) fn perform_disable_io(external_path: &str) -> Vec<String> {
     warnings
 }
 
-/// Create an Agent Block for an external project and auto-enable it.
+// ============================================================================
+// Business Functions (shared by Tauri commands, MCP server, transport.rs)
+// ============================================================================
+
+/// Create an Agent Block bound to a .claude/ directory and auto-enable it.
 ///
-/// This command:
-/// 1. Validates the target project (Dir Block exists, has external_path, has .claude/)
-/// 2. Checks uniqueness (no existing agent for same project)
-/// 3. Creates the Agent Block via engine
-/// 4. Performs I/O: creates symlink + merges MCP config
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_create(
-    state: State<'_, AppState>,
-    file_id: String,
-    payload: AgentCreateV2Payload,
+/// Business logic shared between Tauri command and MCP server.
+/// Validates config_dir, checks uniqueness, auto-creates bot editor,
+/// creates agent block, performs I/O.
+pub async fn do_agent_create(
+    app_state: &AppState,
+    file_id: &str,
+    editor_id: &str,
+    mut payload: AgentCreatePayload,
 ) -> Result<AgentCreateResult, String> {
     // 1. Get engine handle
-    let handle = state
+    let handle = app_state
         .engine_manager
-        .get_engine(&file_id)
+        .get_engine(file_id)
         .ok_or_else(|| format!("File '{}' is not open", file_id))?;
 
-    // 2. Get active editor
-    let editor_id = state
-        .get_active_editor(&file_id)
-        .ok_or_else(|| "No active editor set for this file".to_string())?;
-
-    // 3. Validate target project
-    let target_block = handle
-        .get_block(payload.target_project_id.clone())
-        .await
-        .ok_or_else(|| {
-            format!(
-                "Target project block not found: {}",
-                payload.target_project_id
-            )
-        })?;
-
-    if target_block.block_type != "directory" {
+    // 2. Validate config_dir exists
+    let config_dir = Path::new(&payload.config_dir);
+    if !config_dir.exists() {
         return Err(format!(
-            "Target block is not a directory (type: {})",
-            target_block.block_type
+            "Claude directory does not exist: {}. Run 'claude' in the project first.",
+            payload.config_dir
         ));
     }
 
-    let external_path = get_external_path(&target_block)?;
-
-    // 4. Check .claude/ exists
-    let claude_dir = Path::new(&external_path).join(".claude");
-    if !claude_dir.exists() {
-        return Err(format!(
-            "Claude not initialized in target project: {}. Run 'claude' first.",
-            external_path
-        ));
-    }
-
-    // 5. Uniqueness check: no duplicate agent for the same (project, editor) pair
+    // 3. Uniqueness check: no duplicate agent for the same config_dir
     let all_blocks = handle.get_all_blocks().await;
     for block in all_blocks.values() {
         if block.block_type == "agent" {
             if let Ok(contents) = serde_json::from_value::<AgentContents>(block.contents.clone()) {
-                if contents.target_project_id == payload.target_project_id
-                    && contents.editor_id == payload.editor_id
-                {
+                if contents.config_dir == payload.config_dir {
                     return Err(format!(
-                        "Agent already exists for this editor on project: {} (block_id: {})",
-                        block.name, block.block_id
+                        "Agent already exists for config_dir: {} (block_id: {})",
+                        payload.config_dir, block.block_id
                     ));
                 }
             }
         }
     }
 
-    // 6. Create Agent Block via engine
+    // 4. Auto-create bot editor if not provided
+    if payload.editor_id.is_none()
+        || payload
+            .editor_id
+            .as_ref()
+            .is_some_and(|id| id.trim().is_empty())
+    {
+        let bot_name = payload.name.clone().unwrap_or_else(|| "elfiee".to_string());
+        let bot_editor_id = format!("bot-{}", uuid::Uuid::new_v4());
+
+        let create_editor_cmd = Command::new(
+            editor_id.to_string(),
+            "editor.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "editor_id": bot_editor_id,
+                "name": bot_name,
+                "editor_type": "Bot"
+            }),
+        );
+        handle.process_command(create_editor_cmd).await?;
+
+        payload.editor_id = Some(bot_editor_id);
+    }
+
+    // 5. Create Agent Block via engine
     let cmd = Command::new(
-        editor_id.clone(),
+        editor_id.to_string(),
         "agent.create".to_string(),
         "".to_string(),
         serde_json::json!(payload),
@@ -278,31 +273,82 @@ pub async fn agent_create(
         .entity
         .clone();
 
-    // 7. Perform enable I/O
-    // Get .elf file path from AppState
-    let elf_file_path = state
-        .files
-        .get(&file_id)
-        .map(|f| f.path.to_string_lossy().to_string())
-        .ok_or_else(|| format!("File info not found for '{}'", file_id))?;
+    // 6. Auto wildcard grants for the agent's editor
+    // TODO: Replace hardcoded cap list with cap_id = "*" wildcard grant once CBAC
+    // supports it. Currently every new capability must be added here manually.
+    // Excludes core.grant / core.revoke (owner-only by design).
+    let agent_editor_id = payload.editor_id.as_ref().unwrap();
+    let default_caps = [
+        "core.read",
+        "core.create",
+        "core.link",
+        "core.unlink",
+        "core.delete",
+        "core.rename",
+        "core.change_type",
+        "core.update_metadata",
+        "markdown.read",
+        "markdown.write",
+        "code.read",
+        "code.write",
+        "directory.read",
+        "directory.write",
+        "directory.create",
+        "directory.delete",
+        "directory.rename",
+        "terminal.init",
+        "terminal.execute",
+        "terminal.save",
+        "terminal.close",
+        "task.read",
+        "task.write",
+        "task.commit",
+    ];
 
-    // Get .elf/ block dir from all_blocks (need to re-fetch since state may have changed)
+    for cap in &default_caps {
+        let grant_cmd = Command::new(
+            editor_id.to_string(),
+            "core.grant".to_string(),
+            "*".to_string(),
+            serde_json::json!({
+                "target_editor": agent_editor_id,
+                "capability": cap,
+                "target_block": "*"
+            }),
+        );
+        // Best effort — don't fail agent creation if a grant fails
+        if let Err(e) = handle.process_command(grant_cmd).await {
+            log::warn!("Failed to grant {} to {}: {}", cap, agent_editor_id, e);
+        }
+    }
+
+    // 7. Start per-agent MCP server
+    let mcp_state = Arc::new(app_state.clone());
+    let agent_port = crate::mcp::start_agent_mcp_server(mcp_state, &agent_block_id)
+        .await
+        .map_err(|e| format!("Agent created but MCP server failed: {}", e))?;
+
+    // 8. Perform enable I/O with per-agent port
+    // Re-fetch blocks since state may have changed after create
     let all_blocks = handle.get_all_blocks().await;
     let elf_block_dir = get_elf_block_dir(&all_blocks).ok_or_else(|| {
         ".elf/ directory block not found. Ensure .elf/ is initialized.".to_string()
     })?;
 
-    let (io_success, warnings) = perform_enable_io(&external_path, &elf_block_dir, &elf_file_path);
+    let (io_success, warnings) = perform_enable_io(&payload.config_dir, &elf_block_dir, agent_port);
 
+    let project_root = get_project_root(&payload.config_dir).unwrap_or_default();
     let message = if io_success {
         format!(
-            "Agent '{}' created and enabled for project at {}. Please restart Claude Code to activate MCP.",
+            "Agent '{}' created and enabled on port {} for project at {}. Please restart Claude Code to activate MCP.",
             payload.name.as_deref().unwrap_or("elfiee"),
-            external_path
+            agent_port,
+            project_root
         )
     } else {
         format!(
-            "Agent created but some I/O operations failed. Run agent.enable to retry. Warnings: {}",
+            "Agent created (port {}) but some I/O operations failed. Run agent.enable to retry. Warnings: {}",
+            agent_port,
             warnings.join("; ")
         )
     };
@@ -317,26 +363,22 @@ pub async fn agent_create(
 
 /// Enable an Agent Block: recreate symlink and inject MCP config.
 ///
+/// Business logic shared between Tauri command and MCP server.
 /// Idempotent: can be called on an already-enabled agent to refresh configuration.
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_enable(
-    state: State<'_, AppState>,
-    file_id: String,
-    agent_block_id: String,
+pub async fn do_agent_enable(
+    app_state: &AppState,
+    file_id: &str,
+    editor_id: &str,
+    agent_block_id: &str,
 ) -> Result<AgentEnableResult, String> {
-    let handle = state
+    let handle = app_state
         .engine_manager
-        .get_engine(&file_id)
+        .get_engine(file_id)
         .ok_or_else(|| format!("File '{}' is not open", file_id))?;
-
-    let editor_id = state
-        .get_active_editor(&file_id)
-        .ok_or_else(|| "No active editor set for this file".to_string())?;
 
     // Get Agent Block
     let agent_block = handle
-        .get_block(agent_block_id.clone())
+        .get_block(agent_block_id.to_string())
         .await
         .ok_or_else(|| format!("Agent block not found: {}", agent_block_id))?;
 
@@ -350,57 +392,47 @@ pub async fn agent_enable(
     let contents: AgentContents = serde_json::from_value(agent_block.contents.clone())
         .map_err(|e| format!("Invalid AgentContents: {}", e))?;
 
-    // Get target project external path
-    let target_block = handle
-        .get_block(contents.target_project_id.clone())
-        .await
-        .ok_or_else(|| {
-            format!(
-                "Target project block not found: {}",
-                contents.target_project_id
-            )
-        })?;
-
-    let external_path = get_external_path(&target_block)?;
-
     // Process enable command via engine
     let cmd = Command::new(
-        editor_id.clone(),
+        editor_id.to_string(),
         "agent.enable".to_string(),
-        agent_block_id.clone(),
+        agent_block_id.to_string(),
         serde_json::json!({}),
     );
 
     handle.process_command(cmd).await?;
 
-    // Perform I/O
-    let elf_file_path = state
-        .files
-        .get(&file_id)
-        .map(|f| f.path.to_string_lossy().to_string())
-        .ok_or_else(|| format!("File info not found for '{}'", file_id))?;
+    // Start per-agent MCP server
+    let mcp_state = Arc::new(app_state.clone());
+    let agent_port = crate::mcp::start_agent_mcp_server(mcp_state, agent_block_id)
+        .await
+        .map_err(|e| format!("Agent enabled but MCP server failed: {}", e))?;
 
+    // Perform I/O with per-agent port
     let all_blocks = handle.get_all_blocks().await;
     let elf_block_dir = get_elf_block_dir(&all_blocks).ok_or_else(|| {
         ".elf/ directory block not found. Ensure .elf/ is initialized.".to_string()
     })?;
 
-    let (io_success, warnings) = perform_enable_io(&external_path, &elf_block_dir, &elf_file_path);
+    let (io_success, warnings) =
+        perform_enable_io(&contents.config_dir, &elf_block_dir, agent_port);
 
+    let project_root = get_project_root(&contents.config_dir).unwrap_or_default();
     let message = if io_success {
         format!(
-            "Agent enabled for project at {}. Please restart Claude Code to activate MCP.",
-            external_path
+            "Agent enabled on port {} for project at {}. Please restart Claude Code to activate MCP.",
+            agent_port, project_root
         )
     } else {
         format!(
-            "Agent enabled but some I/O operations failed: {}",
+            "Agent enabled (port {}) but some I/O operations failed: {}",
+            agent_port,
             warnings.join("; ")
         )
     };
 
     Ok(AgentEnableResult {
-        agent_block_id,
+        agent_block_id: agent_block_id.to_string(),
         status: AgentStatus::Enabled,
         needs_restart: io_success,
         message,
@@ -410,26 +442,23 @@ pub async fn agent_enable(
 
 /// Disable an Agent Block: remove symlink and MCP config.
 ///
+/// Business logic shared between Tauri command, MCP server, and
+/// auto-disconnect handler (transport.rs).
 /// Idempotent: can be called on an already-disabled agent.
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_disable(
-    state: State<'_, AppState>,
-    file_id: String,
-    agent_block_id: String,
+pub async fn do_agent_disable(
+    app_state: &AppState,
+    file_id: &str,
+    editor_id: &str,
+    agent_block_id: &str,
 ) -> Result<AgentDisableResult, String> {
-    let handle = state
+    let handle = app_state
         .engine_manager
-        .get_engine(&file_id)
+        .get_engine(file_id)
         .ok_or_else(|| format!("File '{}' is not open", file_id))?;
-
-    let editor_id = state
-        .get_active_editor(&file_id)
-        .ok_or_else(|| "No active editor set for this file".to_string())?;
 
     // Get Agent Block
     let agent_block = handle
-        .get_block(agent_block_id.clone())
+        .get_block(agent_block_id.to_string())
         .await
         .ok_or_else(|| format!("Agent block not found: {}", agent_block_id))?;
 
@@ -443,34 +472,27 @@ pub async fn agent_disable(
     let contents: AgentContents = serde_json::from_value(agent_block.contents.clone())
         .map_err(|e| format!("Invalid AgentContents: {}", e))?;
 
-    // Get target project external path
-    let target_block = handle
-        .get_block(contents.target_project_id.clone())
-        .await
-        .ok_or_else(|| {
-            format!(
-                "Target project block not found: {}",
-                contents.target_project_id
-            )
-        })?;
-
-    let external_path = get_external_path(&target_block)?;
-
     // Process disable command via engine
     let cmd = Command::new(
-        editor_id.clone(),
+        editor_id.to_string(),
         "agent.disable".to_string(),
-        agent_block_id.clone(),
+        agent_block_id.to_string(),
         serde_json::json!({}),
     );
 
     handle.process_command(cmd).await?;
 
-    // Perform I/O: clean up symlink and MCP config
-    let warnings = perform_disable_io(&external_path);
+    // Stop per-agent MCP server
+    crate::mcp::stop_agent_mcp_server(app_state, agent_block_id)
+        .await
+        .unwrap_or_else(|e| eprintln!("Warning: Failed to stop agent MCP server: {}", e));
 
+    // Perform I/O: clean up symlink and MCP config
+    let warnings = perform_disable_io(&contents.config_dir);
+
+    let project_root = get_project_root(&contents.config_dir).unwrap_or_default();
     let message = if warnings.is_empty() {
-        format!("Agent disabled for project at {}.", external_path)
+        format!("Agent disabled for project at {}.", project_root)
     } else {
         format!(
             "Agent disabled but some cleanup failed: {}",
@@ -479,9 +501,142 @@ pub async fn agent_disable(
     };
 
     Ok(AgentDisableResult {
-        agent_block_id,
+        agent_block_id: agent_block_id.to_string(),
         status: AgentStatus::Disabled,
         message,
         warnings,
     })
+}
+
+// ============================================================================
+// Recovery: Restore MCP servers for enabled agents
+// ============================================================================
+
+/// Recover per-agent MCP servers for all enabled agents in a file.
+///
+/// Called when a file is opened. For each agent block with status=Enabled:
+/// 1. Allocate a new port (ports don't persist across restarts)
+/// 2. Start per-agent MCP server
+/// 3. Update .mcp.json with the new port
+/// 4. Refresh symlink (idempotent)
+///
+/// Errors are logged but don't fail the file open.
+pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) {
+    let handle = match app_state.engine_manager.get_engine(file_id) {
+        Some(h) => h,
+        None => return,
+    };
+
+    let blocks = handle.get_all_blocks().await;
+    let elf_block_dir = get_elf_block_dir(&blocks);
+
+    for block in blocks.values() {
+        if block.block_type != "agent" {
+            continue;
+        }
+
+        let contents: AgentContents = match serde_json::from_value(block.contents.clone()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        if contents.status != AgentStatus::Enabled {
+            continue;
+        }
+
+        // Start per-agent MCP server
+        let mcp_state = Arc::new(app_state.clone());
+        match crate::mcp::start_agent_mcp_server(mcp_state, &block.block_id).await {
+            Ok(port) => {
+                // Update .mcp.json with new port
+                if let Some(ref elf_dir) = elf_block_dir {
+                    let (_, warnings) = perform_enable_io(&contents.config_dir, elf_dir, port);
+                    if !warnings.is_empty() {
+                        eprintln!(
+                            "Agent recovery '{}': I/O warnings: {}",
+                            block.name,
+                            warnings.join("; ")
+                        );
+                    }
+                }
+                println!("Agent recovery: Restored '{}' on port {}", block.name, port);
+            }
+            Err(e) => {
+                eprintln!(
+                    "Agent recovery: Failed to start MCP server for '{}': {}",
+                    block.name, e
+                );
+            }
+        }
+    }
+}
+
+/// Stop all per-agent MCP servers for agents in a specific file.
+///
+/// Called when a file is closed. Finds all agent servers belonging to
+/// this file and shuts them down.
+pub async fn shutdown_agent_servers(app_state: &AppState, file_id: &str) {
+    let handle = match app_state.engine_manager.get_engine(file_id) {
+        Some(h) => h,
+        None => return,
+    };
+
+    let blocks = handle.get_all_blocks().await;
+    for block in blocks.values() {
+        if block.block_type != "agent" {
+            continue;
+        }
+        if let Err(e) = crate::mcp::stop_agent_mcp_server(app_state, &block.block_id).await {
+            eprintln!(
+                "Failed to stop agent MCP server for '{}': {}",
+                block.name, e
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Tauri Commands (thin wrappers around business functions)
+// ============================================================================
+
+/// Create an Agent Block bound to a .claude/ directory and auto-enable it.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_create(
+    state: State<'_, AppState>,
+    file_id: String,
+    payload: AgentCreatePayload,
+) -> Result<AgentCreateResult, String> {
+    let editor_id = state
+        .get_active_editor(&file_id)
+        .ok_or_else(|| "No active editor set for this file".to_string())?;
+    do_agent_create(&state, &file_id, &editor_id, payload).await
+}
+
+/// Enable an Agent Block: recreate symlink and inject MCP config.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_enable(
+    state: State<'_, AppState>,
+    file_id: String,
+    agent_block_id: String,
+) -> Result<AgentEnableResult, String> {
+    let editor_id = state
+        .get_active_editor(&file_id)
+        .ok_or_else(|| "No active editor set for this file".to_string())?;
+    do_agent_enable(&state, &file_id, &editor_id, &agent_block_id).await
+}
+
+/// Disable an Agent Block: remove symlink and MCP config.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_disable(
+    state: State<'_, AppState>,
+    file_id: String,
+    agent_block_id: String,
+) -> Result<AgentDisableResult, String> {
+    let editor_id = state
+        .get_active_editor(&file_id)
+        .ok_or_else(|| "No active editor set for this file".to_string())?;
+    do_agent_disable(&state, &file_id, &editor_id, &agent_block_id).await
 }

@@ -6,7 +6,6 @@ pub mod mcp_config;
 pub mod path_validator;
 pub mod pty;
 pub mod snapshot;
-pub mod template_copy;
 /// Utility modules for Elfiee application
 ///
 /// This module provides common utility functions used throughout the application.

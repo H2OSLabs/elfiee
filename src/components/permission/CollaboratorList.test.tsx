@@ -251,7 +251,8 @@ describe('CollaboratorList Component', () => {
       owner: 'owner-123',
       contents: {
         name: 'ElfieeBot',
-        target_project_id: 'dir-block-1',
+        config_dir: '/home/user/repo/.claude',
+        editor_id: 'bot-789',
         status: 'enabled',
       },
       children: {},

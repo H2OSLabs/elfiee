@@ -1,156 +1,50 @@
-//! Module-level tests for Agent extension (Phase 1 + Phase 2)
+//! Module-level tests for Agent extension
 
 use super::*;
 
 // ============================================
-// Phase 1 Types (preserved for backward compatibility)
-// ============================================
-
-#[test]
-fn test_agent_config_serialization() {
-    let config = AgentConfig {
-        editor_id: "agent-123".to_string(),
-        provider: "anthropic".to_string(),
-        model: "claude-sonnet-4-20250514".to_string(),
-        api_key_env: "ANTHROPIC_API_KEY".to_string(),
-        system_prompt: "You are helpful.".to_string(),
-    };
-
-    let json = serde_json::to_value(&config).unwrap();
-    assert_eq!(json["editor_id"], "agent-123");
-    assert_eq!(json["provider"], "anthropic");
-
-    // Roundtrip
-    let deserialized: AgentConfig = serde_json::from_value(json).unwrap();
-    assert_eq!(deserialized.editor_id, config.editor_id);
-}
-
-#[test]
-fn test_proposed_command_serialization() {
-    let cmd = ProposedCommand {
-        cap_id: "markdown.write".to_string(),
-        block_id: "block-abc".to_string(),
-        payload: serde_json::json!({"content": "# Hello"}),
-        description: Some("Write heading".to_string()),
-    };
-
-    let json = serde_json::to_value(&cmd).unwrap();
-    assert_eq!(json["cap_id"], "markdown.write");
-    assert_eq!(json["description"], "Write heading");
-}
-
-#[test]
-fn test_proposed_command_without_description() {
-    let cmd = ProposedCommand {
-        cap_id: "markdown.read".to_string(),
-        block_id: "block-xyz".to_string(),
-        payload: serde_json::json!({}),
-        description: None,
-    };
-
-    let json = serde_json::to_value(&cmd).unwrap();
-    assert!(!json.as_object().unwrap().contains_key("description"));
-}
-
-#[test]
-fn test_proposal_status_serialization() {
-    assert_eq!(
-        serde_json::to_string(&ProposalStatus::Pending).unwrap(),
-        "\"pending\""
-    );
-    assert_eq!(
-        serde_json::to_string(&ProposalStatus::Approved).unwrap(),
-        "\"approved\""
-    );
-    assert_eq!(
-        serde_json::to_string(&ProposalStatus::Rejected).unwrap(),
-        "\"rejected\""
-    );
-}
-
-#[test]
-fn test_proposal_status_deserialization() {
-    let pending: ProposalStatus = serde_json::from_str("\"pending\"").unwrap();
-    let approved: ProposalStatus = serde_json::from_str("\"approved\"").unwrap();
-    let rejected: ProposalStatus = serde_json::from_str("\"rejected\"").unwrap();
-
-    assert_eq!(pending, ProposalStatus::Pending);
-    assert_eq!(approved, ProposalStatus::Approved);
-    assert_eq!(rejected, ProposalStatus::Rejected);
-}
-
-#[test]
-fn test_proposal_serialization() {
-    let proposal = Proposal {
-        proposed_commands: vec![ProposedCommand {
-            cap_id: "markdown.write".to_string(),
-            block_id: "block-1".to_string(),
-            payload: serde_json::json!({"content": "Hello"}),
-            description: Some("Write content".to_string()),
-        }],
-        status: ProposalStatus::Pending,
-        prompt: "Create a document".to_string(),
-        raw_response: Some("LLM response here".to_string()),
-    };
-
-    let json = serde_json::to_value(&proposal).unwrap();
-    assert_eq!(json["status"], "pending");
-    assert_eq!(json["prompt"], "Create a document");
-    assert_eq!(json["proposed_commands"].as_array().unwrap().len(), 1);
-}
-
-// ============================================
-// Phase 2 Types
+// Data Model Tests
 // ============================================
 
 #[test]
 fn test_agent_contents_serialization() {
     let contents = AgentContents {
         name: "elfiee".to_string(),
-        target_project_id: "proj-123".to_string(),
+        provider: "claude_code".to_string(),
+        config_dir: "/home/user/repo-a/.claude".to_string(),
         status: AgentStatus::Enabled,
-        editor_id: Some("bot-123".to_string()),
+        editor_id: "bot-123".to_string(),
     };
 
     let json = serde_json::to_value(&contents).unwrap();
     assert_eq!(json["name"], "elfiee");
-    assert_eq!(json["target_project_id"], "proj-123");
+    assert_eq!(json["provider"], "claude_code");
+    assert_eq!(json["config_dir"], "/home/user/repo-a/.claude");
     assert_eq!(json["status"], "enabled");
     assert_eq!(json["editor_id"], "bot-123");
 
     // Roundtrip
     let deserialized: AgentContents = serde_json::from_value(json).unwrap();
     assert_eq!(deserialized.name, "elfiee");
-    assert_eq!(deserialized.target_project_id, "proj-123");
+    assert_eq!(deserialized.config_dir, "/home/user/repo-a/.claude");
     assert_eq!(deserialized.status, AgentStatus::Enabled);
-    assert_eq!(deserialized.editor_id, Some("bot-123".to_string()));
+    assert_eq!(deserialized.editor_id, "bot-123");
 }
 
 #[test]
-fn test_agent_contents_without_editor_id() {
-    // editor_id: None should be omitted from JSON (skip_serializing_if)
-    let contents = AgentContents {
-        name: "elfiee".to_string(),
-        target_project_id: "proj-123".to_string(),
-        status: AgentStatus::Enabled,
-        editor_id: None,
-    };
-
-    let json = serde_json::to_value(&contents).unwrap();
-    assert!(!json.as_object().unwrap().contains_key("editor_id"));
-}
-
-#[test]
-fn test_agent_contents_backward_compat_no_editor_id() {
-    // JSON without editor_id should deserialize to editor_id: None
+fn test_agent_contents_editor_id_required() {
+    // JSON without editor_id should fail deserialization (editor_id is now required)
     let json = serde_json::json!({
         "name": "elfiee",
-        "target_project_id": "proj-123",
+        "config_dir": "/home/user/repo-a/.claude",
         "status": "enabled"
     });
 
-    let contents: AgentContents = serde_json::from_value(json).unwrap();
-    assert_eq!(contents.editor_id, None);
+    let result = serde_json::from_value::<AgentContents>(json);
+    assert!(
+        result.is_err(),
+        "editor_id is required, deserialization should fail"
+    );
 }
 
 #[test]
@@ -175,31 +69,33 @@ fn test_agent_status_deserialization() {
 }
 
 #[test]
-fn test_agent_create_v2_payload_with_name() {
-    let payload = AgentCreateV2Payload {
+fn test_agent_create_payload_with_all_fields() {
+    let payload = AgentCreatePayload {
         name: Some("my-agent".to_string()),
-        target_project_id: "proj-123".to_string(),
+        provider: "claude_code".to_string(),
+        config_dir: "/home/user/repo-a/.claude".to_string(),
         editor_id: Some("bot-editor-1".to_string()),
     };
 
     let json = serde_json::to_value(&payload).unwrap();
     assert_eq!(json["name"], "my-agent");
-    assert_eq!(json["target_project_id"], "proj-123");
+    assert_eq!(json["config_dir"], "/home/user/repo-a/.claude");
     assert_eq!(json["editor_id"], "bot-editor-1");
 }
 
 #[test]
-fn test_agent_create_v2_payload_without_name() {
-    let payload = AgentCreateV2Payload {
+fn test_agent_create_payload_without_optionals() {
+    let payload = AgentCreatePayload {
         name: None,
-        target_project_id: "proj-123".to_string(),
+        provider: "claude_code".to_string(),
+        config_dir: "/home/user/repo-a/.claude".to_string(),
         editor_id: None,
     };
 
     let json = serde_json::to_value(&payload).unwrap();
     assert!(!json.as_object().unwrap().contains_key("name")); // skip_serializing_if
     assert!(!json.as_object().unwrap().contains_key("editor_id")); // skip_serializing_if
-    assert_eq!(json["target_project_id"], "proj-123");
+    assert_eq!(json["config_dir"], "/home/user/repo-a/.claude");
 }
 
 #[test]

@@ -127,7 +127,7 @@ pub fn run() {
             .typ::<extensions::terminal::TerminalExecutePayload>()
             .typ::<extensions::terminal::TerminalInitPayload>()
             // Agent extension types (Phase 2)
-            .typ::<extensions::agent::AgentCreateV2Payload>()
+            .typ::<extensions::agent::AgentCreatePayload>()
             .typ::<extensions::agent::AgentEnablePayload>()
             .typ::<extensions::agent::AgentDisablePayload>()
             .typ::<extensions::agent::AgentContents>()

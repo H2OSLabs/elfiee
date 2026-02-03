@@ -96,7 +96,7 @@ Every tool (except `elfiee_file_list`) requires `project` -- the `.elf` file pat
 | `elfiee_block_link` | Link parent->child | `project`, `parent_id`, `child_id`, `relation` |
 | `elfiee_block_unlink` | Remove relation | `project`, `parent_id`, `child_id`, `relation` |
 
-Relation types: `contains`, `references`, `implement`, or custom strings.
+Relation type: only `implement` is allowed. Semantics: `A → B` means "A's change causes B to need a change" (upstream defines downstream).
 
 ### Content Read/Write
 
@@ -151,6 +151,86 @@ Capability IDs: `core.create`, `core.read`, `core.link`, `core.unlink`, `core.de
 
 Use `elfiee_exec` for capabilities not covered by dedicated tools.
 
+## Causal Linking Protocol
+
+**Core rule**: Every time you modify block B because of block A, create a link:
+
+```
+elfiee_block_link(project, parent_id=A, child_id=B, relation="implement")
+```
+
+The `implement` relation means "upstream defines/decides downstream". This builds a traceable causal chain.
+
+### When to link
+
+| Scenario | Link |
+|----------|------|
+| Task block describes requirement, you write Code block to implement it | Task → Code |
+| PRD/spec block defines tasks, you create Task blocks from it | PRD → Task |
+| Code block written, you write Test block to verify it | Code → Test |
+| Bug report block leads to a fix in Code block | Bug → Code |
+| Design block drives UI component in Code block | Design → Code |
+
+### When NOT to link
+
+- Reading a block for reference without modifying anything downstream
+- The two blocks are unrelated — just happened to edit both in the same session
+- A link already exists (idempotent: linking twice is harmless but unnecessary)
+
+### Example chain
+
+```
+PRD → Task-Auth → Code-Login → Test-Login
+                → Code-Session → Test-Session
+```
+
+## Graph-First Context Navigation
+
+**Core rule**: When you need context from the .elf project, traverse the relation graph first before searching unlinked blocks.
+
+### Algorithm
+
+```
+1. Start: elfiee_block_get(target_block) — read the block you're working on
+2. Map:   elfiee_block_list — get ALL blocks with their children relations
+3. Build reverse index:
+     for each block B:
+       for each child_id in B.children["implement"]:
+         parents[child_id].add(B.block_id)
+4. Traverse upstream (parents):
+     current = target_block
+     while parents[current] is not empty:
+       read each parent block
+       current = parent (continue to root)
+5. Traverse downstream (children):
+     read target_block.children["implement"] recursively
+6. Read siblings:
+     for each parent of target_block:
+       read other children of that parent (siblings)
+7. Only if still insufficient: search remaining unlinked blocks
+```
+
+### Why graph-first
+
+- The relation graph encodes **causal intent** — blocks linked by `implement` are logically dependent
+- Upstream blocks contain the **"why"** (requirements, specs, tasks)
+- Downstream blocks contain the **"how"** (implementations, tests)
+- Siblings share the same upstream context — likely relevant
+- Unlinked blocks are noise until proven otherwise
+
+### Quick example
+
+You're editing `Code-Login`. Before searching randomly:
+
+```
+1. elfiee_block_get("Code-Login")          — read the code
+2. elfiee_block_list → build parent map
+3. Upstream: Task-Auth → PRD               — understand the requirement
+4. Downstream: Test-Login                  — see existing tests
+5. Siblings: Code-Session (shares Task-Auth parent) — related module
+6. Only then: search other blocks if needed
+```
+
 ## Workflow Examples
 
 ### Read all markdown blocks
@@ -181,10 +261,21 @@ Use `elfiee_exec` for capabilities not covered by dedicated tools.
 5. elfiee_terminal_close(project, block_id)
 ```
 
-### Link blocks with implement relation
+### Link blocks after causal modification
 
 ```
-1. elfiee_block_link(project, parent_id=task_block_id, child_id=code_block_id, relation="implement")
+1. (You just wrote code in code_block because task_block required it)
+2. elfiee_block_link(project, parent_id=task_block_id, child_id=code_block_id, relation="implement")
+```
+
+### Navigate context via relation graph
+
+```
+1. elfiee_block_list(project) -> get all blocks with children relations
+2. Find target block's parents (blocks whose children["implement"] includes target)
+3. elfiee_block_get(project, parent_id) -> read upstream context (the "why")
+4. Read siblings (other children of the same parent) -> related blocks
+5. Read target's own children -> downstream implementations
 ```
 
 ## MCP Resources

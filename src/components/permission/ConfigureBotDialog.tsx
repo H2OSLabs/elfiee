@@ -1,128 +1,112 @@
-import { useState } from 'react'
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-
-interface BotConfig {
-  model: string
-  apiKey: string
-  systemPrompt: string
-}
+import { Badge } from '@/components/ui/badge'
+import { FolderOpen, Cpu } from 'lucide-react'
+import type { AgentContents, Block } from '@/bindings'
 
 interface ConfigureBotDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   botName: string
-  onSave?: (config: BotConfig) => Promise<void>
+  agentBlock?: Block
 }
 
-const MODELS = [
-  { id: 'gpt-4', name: 'GPT-4' },
-  { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
-  { id: 'claude-3-opus', name: 'Claude 3 Opus' },
-  { id: 'claude-3-sonnet', name: 'Claude 3 Sonnet' },
-  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
-  { id: 'grok-1', name: 'Grok 1' },
-]
+const PROVIDER_LABELS: Record<string, string> = {
+  claude_code: 'Claude Code',
+  cursor: 'Cursor',
+  windsurf: 'Windsurf',
+}
 
 export function ConfigureBotDialog({
   open,
   onOpenChange,
   botName,
-  onSave,
+  agentBlock,
 }: ConfigureBotDialogProps) {
-  const [model, setModel] = useState('gpt-4')
-  const [apiKey, setApiKey] = useState('')
-  const [systemPrompt, setSystemPrompt] = useState(
-    'You are a helpful coding assistant.'
-  )
-  const [isSaving, setIsSaving] = useState(false)
-
-  // Reset form when opening/closing could be handled here if needed
-  // For now, we keep state as is to simulate persistence during session
-
-  const handleSave = async () => {
-    setIsSaving(true)
-    try {
-      if (onSave) {
-        await onSave({ model, apiKey, systemPrompt })
-      }
-      onOpenChange(false)
-    } catch (error) {
-      console.error('Failed to save config:', error)
-    } finally {
-      setIsSaving(false)
-    }
-  }
+  const agentContents = agentBlock?.contents as AgentContents | undefined
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Configure {botName}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Cpu className="h-5 w-5" />
+            Agent Configuration
+          </DialogTitle>
+          <DialogDescription>
+            Configuration for <strong>{botName}</strong>
+          </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid gap-2">
-            <Label htmlFor="model">Model</Label>
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger id="model">
-                <SelectValue placeholder="Select a model" />
-              </SelectTrigger>
-              <SelectContent>
-                {MODELS.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+
+        {agentContents ? (
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-1.5">
+              <Label className="text-muted-foreground">Status</Label>
+              <Badge
+                variant={
+                  agentContents.status === 'enabled' ? 'default' : 'secondary'
+                }
+                className={`w-fit ${
+                  agentContents.status === 'enabled'
+                    ? 'bg-green-100 text-green-700 hover:bg-green-100/80 dark:bg-green-900/30 dark:text-green-400'
+                    : ''
+                }`}
+              >
+                {agentContents.status}
+              </Badge>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label className="text-muted-foreground">Config Directory</Label>
+              <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
+                <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <code className="truncate text-sm">
+                  {agentContents.config_dir}
+                </code>
+              </div>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label className="text-muted-foreground">Provider</Label>
+              <p className="text-sm">
+                {PROVIDER_LABELS[agentContents.provider ?? ''] ??
+                  agentContents.provider ??
+                  'Not set'}
+              </p>
+            </div>
+
+            {agentContents.editor_id && (
+              <div className="grid gap-1.5">
+                <Label className="text-muted-foreground">Editor ID</Label>
+                <code className="truncate text-xs text-muted-foreground">
+                  {agentContents.editor_id}
+                </code>
+              </div>
+            )}
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="apiKey">API Key</Label>
-            <Input
-              id="apiKey"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-..."
-              type="password"
-            />
+        ) : (
+          <div className="flex flex-col items-center justify-center rounded-md border border-dashed p-6 text-center">
+            <Cpu className="mb-2 h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">
+              No agent block created yet.
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground/70">
+              Toggle the Agent switch to create one.
+            </p>
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="systemPrompt">System Prompt</Label>
-            <Textarea
-              id="systemPrompt"
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              className="resize-none"
-              rows={4}
-            />
-          </div>
-        </div>
+        )}
+
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={isSaving}
-          >
-            Cancel
-          </Button>
-          <Button onClick={handleSave} disabled={isSaving}>
-            {isSaving ? 'Saving...' : 'Save Configuration'}
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Close
           </Button>
         </DialogFooter>
       </DialogContent>

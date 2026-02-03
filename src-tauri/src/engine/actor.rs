@@ -385,12 +385,18 @@ impl ElfileEngineActor {
             .ok_or_else(|| format!("Unknown capability: {}", cmd.cap_id))?;
 
         // 2. Get block (None for create operations, Some for others)
-        // System-level operations like core.create, editor.create, editor.delete, and agent.create don't require a block
+        // System-level operations like core.create, editor.create, editor.delete, and agent.create don't require a block.
+        // Wildcard grants/revokes (block_id = "*") also skip block lookup since "*" is not a real block.
         let mut block_opt = if cmd.cap_id == "core.create"
             || cmd.cap_id == "editor.create"
             || cmd.cap_id == "editor.delete"
             || cmd.cap_id == "agent.create"
         {
+            None
+        } else if (cmd.cap_id == "core.grant" || cmd.cap_id == "core.revoke") && cmd.block_id == "*"
+        {
+            // Wildcard grant/revoke: no specific block to look up.
+            // Authorization is handled by the caller (Tauri command layer or MCP server).
             None
         } else {
             Some(
@@ -1157,5 +1163,109 @@ mod tests {
 
             handle.shutdown().await;
         }
+    }
+
+    #[tokio::test]
+    async fn test_wildcard_grant_succeeds() {
+        let event_pool = EventStore::create(":memory:").await.unwrap();
+        let handle = spawn_engine("test_file".to_string(), event_pool)
+            .await
+            .unwrap();
+
+        // Create an editor first
+        let create_editor_cmd = Command::new(
+            "alice".to_string(),
+            "editor.create".to_string(),
+            "".to_string(),
+            serde_json::json!({ "name": "Bob", "editor_type": "Bot" }),
+        );
+        let events = handle.process_command(create_editor_cmd).await.unwrap();
+        let bob_id = events[0].entity.clone();
+
+        // Wildcard grant: block_id = "*" should NOT fail with "Block not found"
+        let grant_cmd = Command::new(
+            "alice".to_string(),
+            "core.grant".to_string(),
+            "*".to_string(),
+            serde_json::json!({
+                "target_editor": bob_id,
+                "capability": "markdown.read",
+                "target_block": "*"
+            }),
+        );
+        let result = handle.process_command(grant_cmd).await;
+        assert!(
+            result.is_ok(),
+            "Wildcard grant should succeed, got: {:?}",
+            result.err()
+        );
+
+        // Verify the grant was recorded
+        let has_grant = handle
+            .check_grant(bob_id.clone(), "markdown.read".to_string(), "*".to_string())
+            .await;
+        assert!(has_grant, "Bob should have wildcard markdown.read grant");
+
+        handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_wildcard_revoke_succeeds() {
+        let event_pool = EventStore::create(":memory:").await.unwrap();
+        let handle = spawn_engine("test_file".to_string(), event_pool)
+            .await
+            .unwrap();
+
+        // Create an editor
+        let create_editor_cmd = Command::new(
+            "alice".to_string(),
+            "editor.create".to_string(),
+            "".to_string(),
+            serde_json::json!({ "name": "Bob", "editor_type": "Bot" }),
+        );
+        let events = handle.process_command(create_editor_cmd).await.unwrap();
+        let bob_id = events[0].entity.clone();
+
+        // Grant first
+        let grant_cmd = Command::new(
+            "alice".to_string(),
+            "core.grant".to_string(),
+            "*".to_string(),
+            serde_json::json!({
+                "target_editor": bob_id,
+                "capability": "code.write",
+                "target_block": "*"
+            }),
+        );
+        handle.process_command(grant_cmd).await.unwrap();
+
+        // Wildcard revoke should also work
+        let revoke_cmd = Command::new(
+            "alice".to_string(),
+            "core.revoke".to_string(),
+            "*".to_string(),
+            serde_json::json!({
+                "target_editor": bob_id,
+                "capability": "code.write",
+                "target_block": "*"
+            }),
+        );
+        let result = handle.process_command(revoke_cmd).await;
+        assert!(
+            result.is_ok(),
+            "Wildcard revoke should succeed, got: {:?}",
+            result.err()
+        );
+
+        // Verify the grant was removed
+        let has_grant = handle
+            .check_grant(bob_id.clone(), "code.write".to_string(), "*".to_string())
+            .await;
+        assert!(
+            !has_grant,
+            "Bob should no longer have wildcard code.write grant"
+        );
+
+        handle.shutdown().await;
     }
 }

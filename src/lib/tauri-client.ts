@@ -18,7 +18,7 @@ import {
   type RevokePayload,
   type FileMetadata,
   type TaskCommitResult,
-  type AgentCreateV2Payload,
+  type AgentCreatePayload,
   type AgentCreateResult,
   type AgentEnableResult,
   type AgentDisableResult,
@@ -1153,12 +1153,12 @@ export class AgentOperations {
    * performs I/O (symlink creation + MCP config merge).
    *
    * @param fileId - The .elf file ID
-   * @param payload - Agent creation payload (target_project_id required, name optional)
+   * @param payload - Agent creation payload (config_dir required, name optional)
    * @returns AgentCreateResult with block ID, status, and restart hint
    */
   static async createAgent(
     fileId: string,
-    payload: AgentCreateV2Payload
+    payload: AgentCreatePayload
   ): Promise<AgentCreateResult> {
     const result = await commands.agentCreate(fileId, payload)
     if (result.status === 'ok') {

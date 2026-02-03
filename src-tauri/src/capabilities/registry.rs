@@ -102,7 +102,6 @@ impl CapabilityRegistry {
 
         // Agent extension
         self.register(Arc::new(AgentCreateCapability));
-        self.register(Arc::new(AgentConfigureCapability));
         self.register(Arc::new(AgentEnableCapability));
         self.register(Arc::new(AgentDisableCapability));
     }

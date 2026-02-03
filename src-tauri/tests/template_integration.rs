@@ -1,14 +1,15 @@
-/// 集成测试：Skills 模板初始化 (F7-01 ~ F7-03)
+/// 集成测试：统一模板系统 — Template -> Block + Physical Files
 ///
 /// 验证：
-/// - bootstrap_elf_meta 后 elfiee-client 模板文件写入到 block 物理目录
+/// - bootstrap_elf_meta 后所有模板文件写入到 block 物理目录（小写路径）
 /// - SKILL.md 内容完整（frontmatter、工具引用、关键约束）
 /// - mcp.json 是合法 JSON 且包含 elfiee server 配置
 /// - capabilities.md 包含所有已注册的 capability
 /// - 目录结构完整（scripts/, assets/, references/, session/）
-/// - agent.enable 后 symlink 目标目录中模板可读
+/// - 物理文件路径使用小写 "agents/"（非 "Agents/"）
 use elfiee_lib::elf::ElfArchive;
 use elfiee_lib::engine::spawn_engine;
+use elfiee_lib::extensions::directory::elf_meta::{build_elf_entries_with_files, TEMPLATE_FILES};
 use elfiee_lib::models::Command;
 use std::fs;
 use tempfile::NamedTempFile;
@@ -50,14 +51,15 @@ async fn setup_engine() -> (
     (archive, handle, elf_path)
 }
 
-/// 创建 .elf/ Dir Block + entries + grant + 模板初始化
+/// 模拟 bootstrap_elf_meta 完整流程（统一模板系统）。
 ///
-/// 模拟 bootstrap_elf_meta 完整流程（包含 Step 4 模板写入）。
+/// 包含 Step 4: 直接写入物理文件到 _block_dir。
+/// 返回 elf_block_id
 async fn bootstrap_elf_meta_with_templates(
     handle: &elfiee_lib::engine::EngineHandle,
     editor_id: &str,
 ) -> String {
-    // Step 1: core.create
+    // Step 1: core.create — .elf/ Dir Block
     let create_cmd = Command::new(
         editor_id.to_string(),
         "core.create".to_string(),
@@ -74,8 +76,45 @@ async fn bootstrap_elf_meta_with_templates(
     let events = handle.process_command(create_cmd).await.unwrap();
     let elf_block_id = events[0].entity.clone();
 
-    // Step 2: directory.write
-    let entries = elfiee_lib::extensions::directory::elf_meta::build_elf_entries();
+    // Step 2: 为每个 TemplateFile 创建 block + 写入内容
+    let mut file_blocks: Vec<(&str, String)> = Vec::new();
+
+    for tmpl in TEMPLATE_FILES {
+        let create_block_cmd = Command::new(
+            editor_id.to_string(),
+            "core.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "name": tmpl.name,
+                "block_type": tmpl.block_type,
+                "source": "outline",
+                "metadata": {
+                    "description": tmpl.description
+                }
+            }),
+        );
+        let block_events = handle.process_command(create_block_cmd).await.unwrap();
+        let block_id = block_events[0].entity.clone();
+
+        let write_cmd = Command::new(
+            editor_id.to_string(),
+            tmpl.write_cap.to_string(),
+            block_id.clone(),
+            serde_json::json!({
+                "content": tmpl.content,
+            }),
+        );
+        handle.process_command(write_cmd).await.unwrap();
+
+        file_blocks.push((tmpl.path, block_id));
+    }
+
+    // Step 3: directory.write
+    let file_block_refs: Vec<(&str, &str)> = file_blocks
+        .iter()
+        .map(|(path, id)| (*path, id.as_str()))
+        .collect();
+    let entries = build_elf_entries_with_files(&file_block_refs);
     let write_cmd = Command::new(
         editor_id.to_string(),
         "directory.write".to_string(),
@@ -84,31 +123,32 @@ async fn bootstrap_elf_meta_with_templates(
     );
     handle.process_command(write_cmd).await.unwrap();
 
-    // Step 3: core.grant wildcard
-    let grant_cmd = Command::new(
-        editor_id.to_string(),
-        "core.grant".to_string(),
-        elf_block_id.clone(),
-        serde_json::json!({
-            "target_editor": "*",
-            "capability": "directory.write",
-            "target_block": elf_block_id,
-        }),
-    );
-    handle.process_command(grant_cmd).await.unwrap();
-
-    // Step 4: 模板写入（模拟 elf_meta.rs 中的逻辑）
+    // Step 4: 写入物理文件到 _block_dir（统一模板系统）
     if let Some(elf_block) = handle.get_block(elf_block_id.clone()).await {
         if let Some(block_dir) = elf_block
             .contents
             .get("_block_dir")
             .and_then(|v| v.as_str())
         {
-            elfiee_lib::utils::template_copy::init_elfiee_client(
-                std::path::Path::new(block_dir),
-                "",
-            )
-            .expect("init_elfiee_client should succeed");
+            let block_dir_path = std::path::Path::new(block_dir);
+
+            for tmpl in TEMPLATE_FILES {
+                let target = block_dir_path.join(tmpl.path);
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent).unwrap();
+                }
+                std::fs::write(&target, tmpl.content).unwrap();
+            }
+
+            // 创建额外的空目录
+            let extra_dirs = [
+                "session/",
+                "agents/elfiee-client/scripts/",
+                "agents/elfiee-client/assets/",
+            ];
+            for dir in &extra_dirs {
+                std::fs::create_dir_all(block_dir_path.join(dir)).unwrap();
+            }
         } else {
             panic!("_block_dir not found in .elf/ block contents");
         }
@@ -137,7 +177,7 @@ async fn get_elf_block_dir(
 }
 
 // ============================================================================
-// 测试：目录结构
+// 测试：目录结构（小写路径）
 // ============================================================================
 
 #[tokio::test]
@@ -146,18 +186,15 @@ async fn test_template_directory_structure() {
     let elf_id = bootstrap_elf_meta_with_templates(&handle, "system").await;
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
     let base = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client");
 
-    assert!(base.exists(), "elfiee-client/ should exist");
+    assert!(base.exists(), "agents/elfiee-client/ should exist");
     assert!(base.join("scripts").is_dir(), "scripts/ should exist");
     assert!(base.join("assets").is_dir(), "assets/ should exist");
     assert!(base.join("references").is_dir(), "references/ should exist");
     assert!(
-        std::path::Path::new(&block_dir)
-            .join("Agents")
-            .join("session")
-            .is_dir(),
+        std::path::Path::new(&block_dir).join("session").is_dir(),
         "session/ should exist"
     );
 
@@ -170,7 +207,7 @@ async fn test_template_empty_dirs_are_empty() {
     let elf_id = bootstrap_elf_meta_with_templates(&handle, "system").await;
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
     let base = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client");
 
     assert_eq!(
@@ -198,7 +235,7 @@ async fn test_skill_md_exists_and_nonempty() {
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
 
     let skill_path = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("SKILL.md");
 
@@ -221,7 +258,7 @@ async fn test_skill_md_has_yaml_frontmatter() {
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
 
     let skill_path = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("SKILL.md");
     let content = fs::read_to_string(&skill_path).unwrap();
@@ -249,14 +286,14 @@ async fn test_skill_md_has_critical_constraint() {
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
 
     let skill_path = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("SKILL.md");
     let content = fs::read_to_string(&skill_path).unwrap();
 
     assert!(
-        content.contains("NEVER use filesystem commands"),
-        "SKILL.md should contain the critical constraint about not using shell commands"
+        content.contains("NEVER do these"),
+        "SKILL.md should contain the critical constraint about prohibited actions"
     );
 
     handle.shutdown().await;
@@ -269,12 +306,12 @@ async fn test_skill_md_references_all_mcp_tools() {
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
 
     let skill_path = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("SKILL.md");
     let content = fs::read_to_string(&skill_path).unwrap();
 
-    // All 29 MCP tools from mcp/server.rs
+    // All 33 MCP tools from mcp/server.rs
     let tools = [
         "elfiee_file_list",
         "elfiee_block_list",
@@ -300,6 +337,10 @@ async fn test_skill_md_references_all_mcp_tools() {
         "elfiee_terminal_execute",
         "elfiee_terminal_save",
         "elfiee_terminal_close",
+        "elfiee_task_create",
+        "elfiee_task_write",
+        "elfiee_task_commit",
+        "elfiee_task_link",
         "elfiee_grant",
         "elfiee_revoke",
         "elfiee_editor_create",
@@ -325,7 +366,7 @@ async fn test_skill_md_has_resource_uris() {
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
 
     let skill_path = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("SKILL.md");
     let content = fs::read_to_string(&skill_path).unwrap();
@@ -361,7 +402,7 @@ async fn test_mcp_json_exists_and_valid() {
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
 
     let mcp_path = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("mcp.json");
 
@@ -383,7 +424,7 @@ async fn test_mcp_json_has_elfiee_server_config() {
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
 
     let mcp_path = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("mcp.json");
     let content = fs::read_to_string(&mcp_path).unwrap();
@@ -425,7 +466,7 @@ async fn test_capabilities_md_exists_and_nonempty() {
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
 
     let cap_path = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("references")
         .join("capabilities.md");
@@ -448,7 +489,7 @@ async fn test_capabilities_md_references_registered_capabilities() {
     let block_dir = get_elf_block_dir(&handle, &elf_id).await;
 
     let cap_path = std::path::Path::new(&block_dir)
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("references")
         .join("capabilities.md");
@@ -498,7 +539,7 @@ async fn test_capabilities_md_references_registered_capabilities() {
 }
 
 // ============================================================================
-// 测试：幂等性
+// 测试：幂等性（重复写入物理文件）
 // ============================================================================
 
 #[tokio::test]
@@ -508,16 +549,18 @@ async fn test_template_init_idempotent() {
     let block_dir_str = get_elf_block_dir(&handle, &elf_id).await;
     let block_dir = std::path::Path::new(&block_dir_str);
 
-    // Call init_elfiee_client again — should not fail
-    let result = elfiee_lib::utils::template_copy::init_elfiee_client(block_dir, "");
-    assert!(
-        result.is_ok(),
-        "Repeated init_elfiee_client should succeed (idempotent)"
-    );
+    // 重复写入模板文件（模拟幂等）
+    for tmpl in TEMPLATE_FILES {
+        let target = block_dir.join(tmpl.path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&target, tmpl.content).unwrap();
+    }
 
     // Files should still be valid
     let skill_path = block_dir
-        .join("Agents")
+        .join("agents")
         .join("elfiee-client")
         .join("SKILL.md");
     let content = fs::read_to_string(&skill_path).unwrap();

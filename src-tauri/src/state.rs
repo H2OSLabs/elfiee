@@ -2,14 +2,30 @@ use crate::elf::ElfArchive;
 use crate::engine::EngineManager;
 use dashmap::DashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU16, AtomicUsize};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Information about an open file
 #[derive(Clone)]
 pub struct FileInfo {
     pub archive: Arc<ElfArchive>,
     pub path: PathBuf,
+}
+
+/// Handle for a running per-agent MCP server.
+///
+/// Each enabled agent gets its own MCP server on a dedicated port.
+/// The cancel_token triggers graceful shutdown when the agent is disabled.
+pub struct AgentServerHandle {
+    /// TCP port this agent's MCP server is listening on
+    pub port: u16,
+    /// Agent Block ID this server is bound to
+    pub agent_block_id: String,
+    /// Cancellation token for graceful shutdown (cancel to stop server)
+    pub cancel_token: CancellationToken,
+    /// Active SSE connection count for this agent's server
+    pub sse_count: Arc<AtomicUsize>,
 }
 
 /// Application state shared across all Tauri commands.
@@ -30,9 +46,15 @@ pub struct AppState {
     /// Using DashMap for thread-safe concurrent access
     pub active_editors: Arc<DashMap<String, String>>,
 
-    /// Active MCP SSE connection count.
+    /// Active MCP SSE connection count (management port).
     /// Used to detect when all clients disconnect so we can auto-disable agent blocks.
     pub sse_connection_count: Arc<AtomicUsize>,
+
+    /// Per-agent MCP server handles: agent_block_id -> AgentServerHandle
+    pub agent_servers: Arc<DashMap<String, AgentServerHandle>>,
+
+    /// Next port to allocate for agent MCP servers (starts at 47201)
+    pub next_agent_port: Arc<AtomicU16>,
 }
 
 impl AppState {
@@ -43,6 +65,8 @@ impl AppState {
             files: Arc::new(DashMap::new()),
             active_editors: Arc::new(DashMap::new()),
             sse_connection_count: Arc::new(AtomicUsize::new(0)),
+            agent_servers: Arc::new(DashMap::new()),
+            next_agent_port: Arc::new(AtomicU16::new(47201)),
         }
     }
 

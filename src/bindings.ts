@@ -735,10 +735,6 @@ export const commands = {
   },
   /**
    * Materialize blocks to the external file system (Checkout).
-   *
-   * This command implements the bottom-layer I/O ability:
-   * 1. Calls the `directory.export` capability for authorization and auditing.
-   * 2. If authorized, performs the 'checkout' by writing block contents to the target path.
    */
   async checkoutWorkspace(
     fileId: string,
@@ -760,19 +756,7 @@ export const commands = {
     }
   },
   /**
-   * Execute a task commit: validate → auto-discover repo → export snapshots → git commit.
-   *
-   * This command follows the Split Pattern:
-   * 1. Calls task.commit capability handler (authorization + audit event)
-   * 2. Auto-discovers linked repo from downstream blocks
-   * 3. Verifies discovered path has .git
-   * 4. Copies downstream block snapshots to repo path
-   * 5. Executes git branch + add + commit flow
-   *
-   * # Arguments
-   * * `file_id` - Elf file containing the task block
-   * * `task_block_id` - The task block to commit
-   * * `editor_id` - Optional editor ID (defaults to active editor)
+   * Execute a task commit (Tauri command wrapper).
    */
   async commitTask(
     fileId: string,
@@ -798,10 +782,7 @@ export const commands = {
    *
    * Hooks are stored in the .elf temp dir, so they disappear on crash/close.
    * Sets `core.hooksPath` to block direct commits and require task.commit workflow.
-   *
-   * # Arguments
-   * * `file_id` - Elf file ID (used to locate temp dir)
-   * * `repo_path` - External project git repo root
+   * Hook content is read from the .elf/ block (event sourced).
    */
   async injectHooksForRepo(
     fileId: string,
@@ -995,17 +976,11 @@ export const commands = {
     }
   },
   /**
-   * Create an Agent Block for an external project and auto-enable it.
-   *
-   * This command:
-   * 1. Validates the target project (Dir Block exists, has external_path, has .claude/)
-   * 2. Checks uniqueness (no existing agent for same project)
-   * 3. Creates the Agent Block via engine
-   * 4. Performs I/O: creates symlink + merges MCP config
+   * Create an Agent Block bound to a .claude/ directory and auto-enable it.
    */
   async agentCreate(
     fileId: string,
-    payload: AgentCreateV2Payload
+    payload: AgentCreatePayload
   ): Promise<Result<AgentCreateResult, string>> {
     try {
       return {
@@ -1019,8 +994,6 @@ export const commands = {
   },
   /**
    * Enable an Agent Block: recreate symlink and inject MCP config.
-   *
-   * Idempotent: can be called on an already-enabled agent to refresh configuration.
    */
   async agentEnable(
     fileId: string,
@@ -1038,8 +1011,6 @@ export const commands = {
   },
   /**
    * Disable an Agent Block: remove symlink and MCP config.
-   *
-   * Idempotent: can be called on an already-disabled agent.
    */
   async agentDisable(
     fileId: string,
@@ -1064,10 +1035,12 @@ export const commands = {
 /** user-defined types **/
 
 /**
- * Phase 2 Agent Block contents, storing project-level AI integration config.
+ * Agent Block contents, storing per-AI-tool integration config.
  *
- * Coexists with Phase 1's `AgentConfig` (LLM direct call config).
  * Stored in `Block.contents`.
+ *
+ * Key change from V1: binds to `config_dir` (absolute path) instead of Dir Block ID.
+ * `editor_id` is now required (not optional).
  */
 export type AgentContents = {
   /**
@@ -1075,19 +1048,53 @@ export type AgentContents = {
    */
   name: string
   /**
-   * Associated external project Dir Block ID.
+   * AI tool provider identifier.
    *
-   * Used to look up the Dir Block in StateProjector,
-   * then get the physical path from `metadata.custom["external_root_path"]`.
+   * Examples: "claude_code", "cursor", "windsurf"
+   * Used to determine provider-specific behavior (symlink paths, MCP config format, etc.)
    */
-  target_project_id: string
+  provider?: string
+  /**
+   * Absolute path to the AI tool's config directory this agent is bound to.
+   *
+   * Examples:
+   * - Claude Code: "/home/user/repo-a/.claude"
+   * - Cursor: "/home/user/repo-a/.cursor"
+   *
+   * Used to derive:
+   * - Symlink target: `{config_dir}/skills/elfiee-client/`
+   * - MCP config locations: `{config_dir.parent()}/.mcp.json` + `{config_dir}/mcp.json`
+   */
+  config_dir: string
   /**
    * Agent current status
    */
   status: AgentStatus
   /**
-   * Bot editor_id associated with this agent.
-   * Used by MCP server to attribute operations to the correct identity.
+   * Bot editor_id associated with this agent (required).
+   * Used by per-agent MCP server to attribute operations to the correct identity.
+   */
+  editor_id: string
+}
+/**
+ * Payload for agent.create capability
+ */
+export type AgentCreatePayload = {
+  /**
+   * Agent display name (optional, default: "elfiee")
+   */
+  name?: string | null
+  /**
+   * AI tool provider identifier (optional, default: "claude_code")
+   */
+  provider?: string
+  /**
+   * Absolute path to the AI tool's config directory (required)
+   */
+  config_dir: string
+  /**
+   * Bot editor_id to associate with this agent.
+   * If not provided, the command layer auto-creates a bot editor.
    */
   editor_id?: string | null
 }
@@ -1111,23 +1118,6 @@ export type AgentCreateResult = {
    * Human-readable message
    */
   message: string
-}
-/**
- * Payload for Phase 2 agent.create capability
- */
-export type AgentCreateV2Payload = {
-  /**
-   * Agent display name (optional, default: "elfiee")
-   */
-  name?: string | null
-  /**
-   * Associated external project Dir Block ID (required)
-   */
-  target_project_id: string
-  /**
-   * Bot editor_id to associate with this agent
-   */
-  editor_id?: string | null
 }
 /**
  * Payload for agent.disable capability
@@ -1198,11 +1188,11 @@ export type AgentEnableResult = {
  */
 export type AgentStatus =
   /**
-   * Enabled: symlink exists, MCP config injected
+   * Enabled: symlink exists, MCP config injected, MCP server running
    */
   | 'enabled'
   /**
-   * Disabled: symlink cleaned, MCP config removed
+   * Disabled: symlink cleaned, MCP config removed, MCP server stopped
    */
   | 'disabled'
 /**

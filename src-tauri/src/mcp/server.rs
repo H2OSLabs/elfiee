@@ -3,7 +3,7 @@
 //! Uses rmcp's macro system for clean tool definitions.
 //! All tools call EngineManager directly, no intermediate layers.
 
-use crate::extensions::agent::{AgentContents, AgentStatus};
+use crate::extensions::agent::AgentContents;
 use crate::mcp;
 use crate::models::Command;
 use crate::state::AppState;
@@ -28,10 +28,17 @@ use std::sync::Arc;
 ///
 /// Provides MCP protocol access to Elfiee's capabilities.
 /// Runs as an independent SSE server, sharing AppState with the GUI.
+///
+/// When `agent_block_id` is set, this server is bound to a specific agent
+/// and `resolve_agent_editor_id` returns that agent's editor deterministically.
+/// When `agent_block_id` is None, this is the management port (47200) and
+/// falls back to the GUI active editor.
 #[derive(Clone)]
 pub struct ElfieeMcpServer {
     app_state: Arc<AppState>,
     tool_router: ToolRouter<Self>,
+    /// Bound agent block ID (per-agent mode) or None (management port)
+    agent_block_id: Option<String>,
 }
 
 // ============================================================================
@@ -258,6 +265,44 @@ pub struct EditorInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskCreateInput {
+    /// Path to the .elf project file
+    pub project: String,
+    /// Name for the new task
+    pub name: String,
+    /// Optional description for the task
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskWriteInput {
+    /// Path to the .elf project file
+    pub project: String,
+    /// Task block ID
+    pub block_id: String,
+    /// Markdown content to write
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskCommitInput {
+    /// Path to the .elf project file
+    pub project: String,
+    /// Task block ID to commit
+    pub block_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskLinkInput {
+    /// Path to the .elf project file
+    pub project: String,
+    /// Task block ID
+    pub task_id: String,
+    /// Block ID to link as implementation
+    pub block_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecInput {
     /// Path to the .elf project file
     pub project: String,
@@ -275,10 +320,14 @@ pub struct ExecInput {
 
 #[tool_router]
 impl ElfieeMcpServer {
-    /// Create a new MCP server instance
-    pub fn new(app_state: Arc<AppState>) -> Self {
+    /// Create a new MCP server instance.
+    ///
+    /// - `agent_block_id = None`: management port mode (fallback to GUI active editor)
+    /// - `agent_block_id = Some(id)`: per-agent mode (deterministic editor identity)
+    pub fn new(app_state: Arc<AppState>, agent_block_id: Option<String>) -> Self {
         Self {
             app_state,
+            agent_block_id,
             tool_router: Self::tool_router(),
         }
     }
@@ -315,27 +364,25 @@ impl ElfieeMcpServer {
 
     /// Resolve the editor ID for MCP operations.
     ///
-    /// Looks for an enabled agent block with an `editor_id` in the file.
-    /// Falls back to the GUI active editor if no agent identity is found.
+    /// In per-agent mode (`agent_block_id` is set), deterministically returns
+    /// that agent's `editor_id` from its AgentContents.
+    ///
+    /// In management port mode (`agent_block_id` is None), falls back to
+    /// the GUI active editor.
     async fn resolve_agent_editor_id(&self, file_id: &str) -> Result<String, McpError> {
-        let handle = self.get_engine(file_id)?;
-        let blocks = handle.get_all_blocks().await;
-
-        for block in blocks.values() {
-            if block.block_type == "agent" {
-                if let Ok(contents) =
-                    serde_json::from_value::<AgentContents>(block.contents.clone())
-                {
-                    if contents.status == AgentStatus::Enabled {
-                        if let Some(editor_id) = contents.editor_id {
-                            return Ok(editor_id);
-                        }
-                    }
-                }
-            }
+        // Per-agent mode: deterministic lookup
+        if let Some(agent_id) = &self.agent_block_id {
+            let handle = self.get_engine(file_id)?;
+            let block = handle
+                .get_block(agent_id.clone())
+                .await
+                .ok_or_else(|| mcp::block_not_found(agent_id))?;
+            let contents: AgentContents = serde_json::from_value(block.contents.clone())
+                .map_err(|e| mcp::invalid_payload(format!("Invalid agent contents: {}", e)))?;
+            return Ok(contents.editor_id);
         }
 
-        // Fallback: GUI active editor (for legacy agents without editor_id)
+        // Management port fallback: GUI active editor
         self.get_editor_id(file_id)
     }
 
@@ -1049,18 +1096,46 @@ impl ElfieeMcpServer {
         &self,
         Parameters(input): Parameters<DirectoryExportInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut payload = json!({ "target_path": input.target_path });
-        if let Some(source_path) = input.source_path {
-            payload["source_path"] = json!(source_path);
-        }
+        let file_id = self.get_file_id(&input.project)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
 
-        self.execute_capability(
-            &input.project,
-            "directory.export",
-            Some(input.block_id),
-            payload,
+        let payload = crate::extensions::directory::DirectoryExportPayload {
+            target_path: input.target_path,
+            source_path: input.source_path,
+        };
+
+        match crate::commands::checkout::do_checkout_workspace(
+            &self.app_state,
+            &file_id,
+            &editor_id,
+            &input.block_id,
+            &payload,
         )
         .await
+        {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "capability": "directory.export",
+                    "editor": editor_id,
+                    "target_path": payload.target_path,
+                    "message": "Directory exported successfully",
+                }))
+                .unwrap(),
+            )])),
+            Err(e) => {
+                let hint = Self::error_hint("directory.export", &e);
+                Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "capability": "directory.export",
+                        "error": e,
+                        "hint": hint,
+                    }))
+                    .unwrap(),
+                )]))
+            }
+        }
     }
 
     // ========================================================================
@@ -1206,6 +1281,153 @@ impl ElfieeMcpServer {
             "core.editor_delete",
             None,
             json!({ "editor_id": input.editor_id }),
+        )
+        .await
+    }
+
+    // ========================================================================
+    // Task Operations
+    // ========================================================================
+
+    /// Create a new task block
+    #[tool(
+        description = "Create a new task block for tracking work. Returns the task block ID. Use elfiee_task_link to link implementation blocks, then elfiee_task_commit to commit to git."
+    )]
+    async fn elfiee_task_create(
+        &self,
+        Parameters(input): Parameters<TaskCreateInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let file_id = self.get_file_id(&input.project)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
+        let handle = self.get_engine(&file_id)?;
+
+        // 1. Create task block
+        let cmd = Command::new(
+            editor_id.clone(),
+            "core.create".to_string(),
+            String::new(),
+            json!({ "name": input.name, "type": "task" }),
+        );
+
+        let events = handle
+            .process_command(cmd)
+            .await
+            .map_err(|e| mcp::invalid_payload(format!("Failed to create task: {}", e)))?;
+
+        let task_block_id = events
+            .first()
+            .map(|ev| ev.entity.clone())
+            .unwrap_or_default();
+
+        // 2. If description provided, update metadata (best effort)
+        if let Some(description) = &input.description {
+            let meta_cmd = Command::new(
+                editor_id.clone(),
+                "core.update_metadata".to_string(),
+                task_block_id.clone(),
+                json!({ "metadata": { "description": description } }),
+            );
+            if let Err(e) = handle.process_command(meta_cmd).await {
+                log::warn!("Failed to set task description: {}", e);
+            }
+        }
+
+        // 3. Return result with block details
+        let mut result = json!({
+            "ok": true,
+            "created_block_id": task_block_id,
+            "name": input.name,
+            "block_type": "task",
+            "editor": editor_id,
+        });
+
+        if let Some(block) = handle.get_block(task_block_id.clone()).await {
+            result["block"] = Self::format_block_summary(&block);
+        }
+        if let Some(desc) = &input.description {
+            result["description"] = json!(desc);
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap(),
+        )]))
+    }
+
+    /// Write content to a task block
+    #[tool(
+        description = "Write or overwrite the markdown content of a task block. Use this to document the task requirements or progress."
+    )]
+    async fn elfiee_task_write(
+        &self,
+        Parameters(input): Parameters<TaskWriteInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.execute_capability(
+            &input.project,
+            "task.write",
+            Some(input.block_id),
+            json!({ "content": input.content }),
+        )
+        .await
+    }
+
+    /// Commit a task to git
+    #[tool(
+        description = "Commit a task: export linked code blocks to their git repositories, create a feature branch, and commit. Returns commit hash, branch name, and exported files."
+    )]
+    async fn elfiee_task_commit(
+        &self,
+        Parameters(input): Parameters<TaskCommitInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let file_id = self.get_file_id(&input.project)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
+
+        match crate::commands::task::do_commit_task(
+            &self.app_state,
+            &file_id,
+            &editor_id,
+            &input.block_id,
+        )
+        .await
+        {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "commit_hash": result.commit_hash,
+                    "branch_name": result.branch_name,
+                    "exported_files": result.exported_files,
+                }))
+                .unwrap(),
+            )])),
+            Err(e) => {
+                let hint = Self::error_hint("task.commit", &e);
+                Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "error": e,
+                        "hint": hint,
+                    }))
+                    .unwrap(),
+                )]))
+            }
+        }
+    }
+
+    /// Link a block to a task as implementation
+    #[tool(
+        description = "Link a code or markdown block to a task as its implementation. Uses 'implement' relation. Idempotent — safe to call multiple times for the same pair."
+    )]
+    async fn elfiee_task_link(
+        &self,
+        Parameters(input): Parameters<TaskLinkInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.execute_capability(
+            &input.project,
+            "core.link",
+            Some(input.task_id),
+            json!({
+                "child_id": input.block_id,
+                "relation": "implement"
+            }),
         )
         .await
     }

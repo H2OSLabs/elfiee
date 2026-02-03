@@ -55,6 +55,16 @@ const { mockStoreInstance, notifySubscribers } = vi.hoisted(() => {
     getGrants: vi.fn().mockReturnValue([]),
     getOutlineTree: vi.fn().mockReturnValue([]),
     getLinkedRepos: vi.fn().mockReturnValue([]),
+    // Agent operations
+    createAgent: vi.fn(),
+    enableAgent: vi.fn(),
+    disableAgent: vi.fn(),
+    getAgentBlocks: vi.fn().mockReturnValue([]),
+    // Global collaborator operations
+    addGlobalCollaborator: vi.fn(),
+    isGlobalCollaborator: vi.fn().mockReturnValue(false),
+    // Block grants
+    getBlockGrants: vi.fn().mockReturnValue([]),
   })
 
   const instance = createInitialState()

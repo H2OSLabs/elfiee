@@ -73,9 +73,10 @@ mod tests {
     fn make_agent_block(status: AgentStatus) -> Block {
         let contents = AgentContents {
             name: "elfiee".to_string(),
-            target_project_id: "proj-123".to_string(),
+            provider: "claude_code".to_string(),
+            config_dir: "/home/user/repo-a/.claude".to_string(),
             status,
-            editor_id: Some("bot-editor-123".to_string()),
+            editor_id: "bot-editor-123".to_string(),
         };
 
         let mut block = Block::new(
@@ -192,7 +193,7 @@ mod tests {
         let contents = &result[0].value["contents"];
 
         assert_eq!(contents["name"], "elfiee");
-        assert_eq!(contents["target_project_id"], "proj-123");
+        assert_eq!(contents["config_dir"], "/home/user/repo-a/.claude");
         assert_eq!(contents["status"], "enabled");
         assert_eq!(contents["editor_id"], "bot-editor-123");
     }

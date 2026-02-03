@@ -144,15 +144,13 @@ pub fn resolve_template(template: &Value, elf_path: &str) -> Value {
     }
 }
 
-/// Build the default MCP server config for Elfiee.
+/// Build the MCP server config for Elfiee with a specific port.
 ///
-/// The Elfiee MCP server runs as an embedded SSE server inside the GUI process
-/// on `http://127.0.0.1:{MCP_PORT}/sse`. Claude Code connects to it via SSE transport.
-///
-/// The `_elf_path` parameter is reserved for future use (standalone CLI mode).
-/// Currently ignored because the embedded server shares AppState with the GUI.
-pub fn build_elfiee_server_config(_elf_path: &str) -> Value {
-    let url = format!("http://127.0.0.1:{}/sse", crate::mcp::MCP_PORT);
+/// The Elfiee MCP server runs as an embedded SSE server inside the GUI process.
+/// Each enabled agent gets its own port (47201–47299).
+/// The management port (47200) is used for legacy/fallback mode.
+pub fn build_elfiee_server_config(port: u16) -> Value {
+    let url = format!("http://127.0.0.1:{}/sse", port);
     serde_json::json!({
         "type": "sse",
         "url": url
@@ -430,7 +428,14 @@ mod tests {
 
     #[test]
     fn test_build_elfiee_server_config() {
-        let config = build_elfiee_server_config("/home/user/project.elf");
+        let config = build_elfiee_server_config(47201);
+        assert_eq!(config["type"], "sse");
+        assert_eq!(config["url"], "http://127.0.0.1:47201/sse");
+    }
+
+    #[test]
+    fn test_build_elfiee_server_config_management_port() {
+        let config = build_elfiee_server_config(crate::mcp::MCP_PORT);
         assert_eq!(config["type"], "sse");
         assert_eq!(
             config["url"],
