@@ -32,6 +32,7 @@ interface CollaboratorItemProps {
   editor: Editor
   grants: Grant[]
   isOwner: boolean
+  isFileOwner?: boolean
   isActive: boolean
   isGlobal?: boolean
   onGrantChange: (
@@ -83,6 +84,12 @@ const getAvailableCapabilities = (blockType: string) => {
         { id: 'terminal.save', label: 'Save', icon: BookOpen },
         { id: 'core.delete', label: 'Delete', icon: Trash2 },
       ]
+    case 'agent':
+      return [
+        { id: 'core.read', label: 'Read', icon: BookOpen },
+        { id: 'agent.enable', label: 'Manage', icon: Settings },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
     default:
       // markdown and other types default to markdown capabilities
       return [
@@ -99,6 +106,7 @@ export const CollaboratorItem = ({
   editor,
   grants,
   isOwner,
+  isFileOwner,
   isActive,
   isGlobal,
   onGrantChange,
@@ -119,10 +127,13 @@ export const CollaboratorItem = ({
   const agentStatus = agentContents?.status
   const isAgentEnabled = agentStatus === 'enabled'
 
+  // Whether this editor has implicit full access (block owner or file owner)
+  const hasFullAccess = isOwner || !!isFileOwner
+
   // Check if editor has a specific capability for this block
   const hasCapability = (capabilityId: string): boolean => {
-    // Owner always has all capabilities
-    if (isOwner) return true
+    // Owner and file owner always have all capabilities
+    if (hasFullAccess) return true
 
     // Check if there's a grant for this capability
     return grants.some(
@@ -134,8 +145,8 @@ export const CollaboratorItem = ({
   }
 
   const handleTogglePermission = async (capabilityId: string) => {
-    // Owner permissions cannot be modified
-    if (isOwner) return
+    // Owner and file owner permissions cannot be modified
+    if (hasFullAccess) return
 
     const currentlyHas = hasCapability(capabilityId)
 
@@ -197,7 +208,7 @@ export const CollaboratorItem = ({
       <div className="mb-3 flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-background shadow-sm">
-            {isOwner ? (
+            {isOwner || isFileOwner ? (
               <Crown className="h-4 w-4 text-amber-500" />
             ) : isBot ? (
               <Bot className="h-4 w-4 text-purple-500" />
@@ -217,6 +228,14 @@ export const CollaboratorItem = ({
                   className="h-4 border-amber-200 bg-amber-100 px-1.5 text-[10px] text-amber-700 hover:bg-amber-100/80"
                 >
                   Owner
+                </Badge>
+              )}
+              {isFileOwner && !isOwner && (
+                <Badge
+                  variant="secondary"
+                  className="h-4 border-amber-200 bg-amber-100 px-1.5 text-[10px] text-amber-700 hover:bg-amber-100/80"
+                >
+                  File Owner
                 </Badge>
               )}
               {isGlobal && !isOwner && (
@@ -245,7 +264,7 @@ export const CollaboratorItem = ({
           </div>
         </div>
 
-        {!isOwner && (
+        {!isOwner && !isFileOwner && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -346,10 +365,12 @@ export const CollaboratorItem = ({
             <div
               key={capability.id}
               onClick={() =>
-                !isOwner && !isLoading && handleTogglePermission(capability.id)
+                !hasFullAccess &&
+                !isLoading &&
+                handleTogglePermission(capability.id)
               }
               className={`group flex items-center gap-2 rounded-md px-2.5 py-1.5 transition-all ${
-                isOwner
+                hasFullAccess
                   ? 'cursor-not-allowed bg-muted/50'
                   : isLoading
                     ? 'cursor-wait bg-muted/50'
@@ -358,8 +379,10 @@ export const CollaboratorItem = ({
                       : 'cursor-pointer bg-muted/30 hover:bg-muted/50'
               } `}
               title={
-                isOwner
-                  ? 'Owner has all permissions'
+                hasFullAccess
+                  ? isFileOwner
+                    ? 'File owner has all permissions'
+                    : 'Owner has all permissions'
                   : isLoading
                     ? 'Updating permission...'
                     : checked
@@ -370,13 +393,13 @@ export const CollaboratorItem = ({
               <Checkbox
                 id={`${editor.editor_id}-${capability.id}`}
                 checked={checked}
-                disabled={isOwner || isLoading}
+                disabled={hasFullAccess || isLoading}
                 className="pointer-events-none h-4 w-4"
                 data-testid={`checkbox-${editor.editor_id}-${capability.id}`}
               />
               <div
                 className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
-                  isOwner
+                  hasFullAccess
                     ? 'text-muted-foreground'
                     : isLoading
                       ? 'text-muted-foreground'

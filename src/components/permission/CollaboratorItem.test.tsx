@@ -438,6 +438,151 @@ describe('CollaboratorItem Component', () => {
     })
   })
 
+  describe('File Owner Behavior', () => {
+    it('should show File Owner badge when isFileOwner is true and not block owner', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      expect(screen.getByText('File Owner')).toBeInTheDocument()
+      expect(screen.queryByText('Owner')).not.toBeInTheDocument()
+    })
+
+    it('should show all permissions as checked and disabled for file owner', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const checkboxes = screen.getAllByRole('checkbox')
+      checkboxes.forEach((checkbox) => {
+        expect(checkbox).toBeDisabled()
+      })
+    })
+
+    it('should not call onGrantChange when clicking permissions for file owner', async () => {
+      const user = userEvent.setup()
+
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const readLabel = screen.getByText('Read').closest('div')
+      if (readLabel) {
+        await user.click(readLabel)
+      }
+
+      expect(mockOnGrantChange).not.toHaveBeenCalled()
+    })
+
+    it('should not show dropdown menu for file owner', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          onRemoveAccess={mockOnRemoveAccess}
+        />
+      )
+
+      // File owner should not have the more options dropdown
+      expect(
+        screen.queryByTestId(`menu-trigger-${mockHumanEditor.editor_id}`)
+      ).not.toBeInTheDocument()
+    })
+
+    it('should show Crown icon for file owner', () => {
+      const { container } = render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const crownIcon = container.querySelector('.text-amber-500')
+      expect(crownIcon).toBeInTheDocument()
+    })
+  })
+
+  describe('Agent Block Permissions', () => {
+    it('should show Read, Manage, Delete for agent block type', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="agent"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      expect(screen.getByText('Read')).toBeInTheDocument()
+      expect(screen.getByText('Manage')).toBeInTheDocument()
+      expect(screen.getByText('Delete')).toBeInTheDocument()
+      // Should NOT show Write (markdown default)
+      expect(screen.queryByText('Write')).not.toBeInTheDocument()
+    })
+
+    it('should show all agent permissions checked for owner', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="agent"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const checkboxes = screen.getAllByRole('checkbox')
+      expect(checkboxes).toHaveLength(3) // Read, Manage, Delete
+      checkboxes.forEach((checkbox) => {
+        expect(checkbox).toBeDisabled()
+      })
+    })
+  })
+
   describe('Wildcard Grants', () => {
     it('should recognize wildcard grants for permissions', () => {
       const wildcardGrants: Grant[] = [

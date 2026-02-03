@@ -53,6 +53,12 @@ describe('CollaboratorList Component', () => {
     editor_type: 'Human',
   }
 
+  const mockSystemEditor: Editor = {
+    editor_id: 'system-editor-id',
+    name: 'FileOwner',
+    editor_type: 'Human',
+  }
+
   const mockGrants: Grant[] = [
     {
       editor_id: 'collab-456',
@@ -136,6 +142,60 @@ describe('CollaboratorList Component', () => {
       expect(screen.getAllByText('Owner').length).toBeGreaterThan(0)
       expect(screen.getByText('Alice')).toBeInTheDocument()
       expect(screen.queryByText('NoAccess')).not.toBeInTheDocument()
+    })
+
+    it('should always show system editor (file owner) even without grants', async () => {
+      // Block owned by a bot, system editor has no explicit grants
+      const botOwnedBlock: Block = {
+        block_id: 'block-1',
+        name: 'Bot Block',
+        block_type: 'markdown',
+        owner: 'bot-999',
+        contents: {},
+        children: {},
+        metadata: {},
+      }
+
+      const botEditor: Editor = {
+        editor_id: 'bot-999',
+        name: 'MCP Bot',
+        editor_type: 'Bot',
+      }
+
+      const store = useAppStore.getState()
+      store.files = new Map([
+        [
+          'file-1',
+          {
+            fileId: 'file-1',
+            metadata: null,
+            activeEditorId: 'system-editor-id',
+            editors: [botEditor, mockSystemEditor],
+            blocks: [botOwnedBlock],
+            selectedBlockId: null,
+            events: [],
+            grants: [], // No explicit grants for system editor
+          },
+        ],
+      ])
+      store.checkPermission = vi.fn().mockResolvedValue(true)
+      store.getSystemEditorId = vi.fn().mockResolvedValue('system-editor-id')
+
+      render(
+        <CollaboratorList
+          fileId="file-1"
+          blockId="block-1"
+          block={botOwnedBlock}
+        />
+      )
+
+      // System editor should appear with "File Owner" badge
+      await waitFor(() => {
+        expect(screen.getByText('FileOwner')).toBeInTheDocument()
+        expect(screen.getByText('File Owner')).toBeInTheDocument()
+      })
+      // Bot owner should also appear
+      expect(screen.getByText('MCP Bot')).toBeInTheDocument()
     })
   })
 

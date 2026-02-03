@@ -37,6 +37,16 @@ export const CollaboratorList = ({
     configDir: string
   }>({ open: false, editorId: '', editorName: '', configDir: '' })
 
+  // Fetch system editor ID (file owner from ~/.elf/config.json)
+  const [systemEditorId, setSystemEditorId] = useState<string | null>(null)
+  const getSystemEditorId = useAppStore((state) => state.getSystemEditorId)
+
+  useEffect(() => {
+    getSystemEditorId()
+      .then(setSystemEditorId)
+      .catch(() => {})
+  }, [getSystemEditorId])
+
   // Subscribe to store state changes
   const editors = useAppStore((state) => {
     const fileState = state.files.get(fileId)
@@ -142,29 +152,36 @@ export const CollaboratorList = ({
 
   // Get editors with permissions for this block
   const collaborators = useMemo(() => {
-    // Get all editors who have grants for this block or are the owner
+    // Get all editors who have grants for this block, are the owner, or are the system editor
     const editorsWithAccess = editors.filter((editor) => {
-      // Owner always has access
+      // Block owner (creator) always has access
       if (editor.editor_id === block.owner) return true
+
+      // System editor (file owner) always has access — backend grants all permissions
+      if (systemEditorId && editor.editor_id === systemEditorId) return true
 
       // Check if editor has any grants for this block (not wildcards for other blocks)
       return relevantGrants.some((g) => g.editor_id === editor.editor_id)
     })
 
-    // Sort: owner first, then active editor, then others
+    // Sort: system editor first, then block owner, then active editor, then others
     return editorsWithAccess.sort((a, b) => {
-      // Owner always first
+      // System editor (file owner) first
+      if (systemEditorId && a.editor_id === systemEditorId) return -1
+      if (systemEditorId && b.editor_id === systemEditorId) return 1
+
+      // Block owner second
       if (a.editor_id === block.owner) return -1
       if (b.editor_id === block.owner) return 1
 
-      // Active editor second
+      // Active editor third
       if (a.editor_id === activeEditor?.editor_id) return -1
       if (b.editor_id === activeEditor?.editor_id) return 1
 
       // Others by name
       return a.name.localeCompare(b.name)
     })
-  }, [editors, block, activeEditor, relevantGrants])
+  }, [editors, block, activeEditor, relevantGrants, systemEditorId])
 
   const handleGrantChange = async (
     editorId: string,
@@ -358,6 +375,9 @@ export const CollaboratorList = ({
               (g) => g.editor_id === editor.editor_id
             )}
             isOwner={editor.editor_id === block.owner}
+            isFileOwner={
+              systemEditorId != null && editor.editor_id === systemEditorId
+            }
             isActive={editor.editor_id === activeEditor?.editor_id}
             isGlobal={isGlobalCollaborator(fileId, editor.editor_id)}
             onGrantChange={handleGrantChange}

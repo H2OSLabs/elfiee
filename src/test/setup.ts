@@ -44,7 +44,7 @@ const { mockStoreInstance, notifySubscribers } = vi.hoisted(() => {
     deleteEntry: vi.fn(),
     importDirectory: vi.fn(),
     checkoutWorkspace: vi.fn(),
-    getSystemEditorId: vi.fn(),
+    getSystemEditorId: vi.fn().mockResolvedValue('system-editor-default'),
     // Mock getters
     getFileMetadata: vi.fn(),
     getBlocks: vi.fn().mockReturnValue([]),
