@@ -10,13 +10,38 @@ pub fn infer_block_type(extension: &str) -> Option<String> {
 
     // 1. Explicit Binary Blacklist - Do NOT import these into DB as text
     match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "ico" | // Images
-        "mp4" | "mov" | "avi" | "mkv" |                          // Video
-        "mp3" | "wav" | "ogg" | "flac" |                         // Audio
-        "pdf" | "zip" | "tar" | "gz" | "7z" | "rar" |            // Archives
-        "exe" | "dll" | "so" | "dylib" | "bin" | "obj" | "o" |   // Binary/Compiled
-        "pyc" | "class" | "wasm" |                               // Bytecode
-        "db" | "sqlite" | "sqlite3" => return None,              // Databases
+        // Images
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" |
+        "icns" | "bmp" | "tiff" | "tif" | "avif" | "heic" | "heif" |
+        "cur" | "psd" | "ai" | "eps" | "raw" | "cr2" | "nef" | "dng" |
+        // Video
+        "mp4" | "mov" | "avi" | "mkv" | "wmv" | "flv" | "webm" | "m4v" |
+        // Audio
+        "mp3" | "wav" | "ogg" | "flac" | "aac" | "m4a" | "wma" | "opus" |
+        "mid" | "midi" |
+        // Archives
+        "pdf" | "zip" | "tar" | "gz" | "7z" | "rar" | "bz2" |
+        "xz" | "zst" | "tgz" | "cab" | "dmg" | "iso" | "img" |
+        // Java/Android archives
+        "jar" | "war" | "ear" | "apk" | "aab" |
+        // Binary/Compiled
+        "exe" | "dll" | "so" | "dylib" | "bin" | "obj" | "o" | "a" |
+        "lib" | "pdb" | "msi" | "ipa" |
+        // Bytecode
+        "pyc" | "class" | "wasm" |
+        // Databases
+        "db" | "sqlite" | "sqlite3" |
+        // Fonts
+        "ttf" | "otf" | "woff" | "woff2" | "eot" |
+        // Office documents (binary formats)
+        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" |
+        "odt" | "ods" | "odp" |
+        // Data formats (binary)
+        "parquet" | "arrow" | "avro" | "pb" |
+        // 3D/Design
+        "blend" | "fbx" | "glb" | "swf" |
+        // OS artifacts
+        "ds_store" => return None,
         _ => {}
     }
 
