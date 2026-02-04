@@ -1,14 +1,15 @@
-/// 集成测试：.elf/ Dir Block 初始化 (I10-01)
+/// 集成测试：.elf/ Dir Block 初始化
 ///
 /// 验证：
 /// - create_file 流程中 .elf/ Dir Block 自动创建
-/// - entries 包含所有预期目录路径和 hook 模板文件（真实 code block）
+/// - entries 包含所有预期目录路径和模板文件 block 引用（4 个文件 block）
 /// - 权限通过协作者机制管理（无 wildcard grant）
-/// - pre-commit hook block 包含模板内容
+/// - 所有模板 block 包含正确内容
 use elfiee_lib::engine::{spawn_engine, EventStore};
-use elfiee_lib::extensions::directory::elf_meta::{build_elf_entries_with_hooks, ELF_DIR_PATHS};
+use elfiee_lib::extensions::directory::elf_meta::{
+    build_elf_entries_with_files, derive_dir_paths, TEMPLATE_FILES,
+};
 use elfiee_lib::models::Command;
-use elfiee_lib::utils::git_hooks::PRE_COMMIT_HOOK_CONTENT;
 
 /// 辅助函数：创建内存 engine + 注册 editor
 async fn setup_engine() -> elfiee_lib::engine::EngineHandle {
@@ -34,13 +35,13 @@ async fn create_editor(handle: &elfiee_lib::engine::EngineHandle, editor_id: &st
     events[0].entity.clone()
 }
 
-/// 辅助函数：模拟 bootstrap_elf_meta 的完整流程。
+/// 辅助函数：模拟 bootstrap_elf_meta 的完整流程（统一模板系统）。
 ///
-/// 返回 (elf_block_id, hook_block_id)
+/// 返回 (elf_block_id, Vec<(path, block_id)>)
 async fn bootstrap_elf_meta(
     handle: &elfiee_lib::engine::EngineHandle,
     editor_id: &str,
-) -> (String, String) {
+) -> (String, Vec<(String, String)>) {
     // Step 1: core.create — .elf/ Dir Block
     let create_cmd = Command::new(
         editor_id.to_string(),
@@ -58,36 +59,45 @@ async fn bootstrap_elf_meta(
     let events = handle.process_command(create_cmd).await.unwrap();
     let elf_block_id = events[0].entity.clone();
 
-    // Step 2: core.create — pre-commit code block
-    let create_hook_cmd = Command::new(
-        editor_id.to_string(),
-        "core.create".to_string(),
-        "".to_string(),
-        serde_json::json!({
-            "name": "pre-commit",
-            "block_type": "code",
-            "source": "outline",
-            "metadata": {
-                "description": "Elfiee pre-commit hook: chain original hooks, then verify task.commit workflow"
-            }
-        }),
-    );
-    let hook_events = handle.process_command(create_hook_cmd).await.unwrap();
-    let hook_block_id = hook_events[0].entity.clone();
+    // Step 2: 为每个 TemplateFile 创建 block + 写入内容
+    let mut file_blocks: Vec<(String, String)> = Vec::new();
 
-    // Step 3: code.write — 写入 hook 模板内容
-    let write_hook_cmd = Command::new(
-        editor_id.to_string(),
-        "code.write".to_string(),
-        hook_block_id.clone(),
-        serde_json::json!({
-            "content": PRE_COMMIT_HOOK_CONTENT,
-        }),
-    );
-    handle.process_command(write_hook_cmd).await.unwrap();
+    for tmpl in TEMPLATE_FILES {
+        let create_block_cmd = Command::new(
+            editor_id.to_string(),
+            "core.create".to_string(),
+            "".to_string(),
+            serde_json::json!({
+                "name": tmpl.name,
+                "block_type": tmpl.block_type,
+                "source": "outline",
+                "metadata": {
+                    "description": tmpl.description
+                }
+            }),
+        );
+        let block_events = handle.process_command(create_block_cmd).await.unwrap();
+        let block_id = block_events[0].entity.clone();
 
-    // Step 4: directory.write — entries 含 hook block 引用
-    let entries = build_elf_entries_with_hooks(&[("git/hooks/pre-commit", &hook_block_id)]);
+        let write_cmd = Command::new(
+            editor_id.to_string(),
+            tmpl.write_cap.to_string(),
+            block_id.clone(),
+            serde_json::json!({
+                "content": tmpl.content,
+            }),
+        );
+        handle.process_command(write_cmd).await.unwrap();
+
+        file_blocks.push((tmpl.path.to_string(), block_id));
+    }
+
+    // Step 3: directory.write — entries 含所有文件 block 引用
+    let file_block_refs: Vec<(&str, &str)> = file_blocks
+        .iter()
+        .map(|(path, id)| (path.as_str(), id.as_str()))
+        .collect();
+    let entries = build_elf_entries_with_files(&file_block_refs);
     let write_cmd = Command::new(
         editor_id.to_string(),
         "directory.write".to_string(),
@@ -96,7 +106,7 @@ async fn bootstrap_elf_meta(
     );
     handle.process_command(write_cmd).await.unwrap();
 
-    (elf_block_id, hook_block_id)
+    (elf_block_id, file_blocks)
 }
 
 // ============================================================================
@@ -122,53 +132,114 @@ async fn test_elf_block_created() {
 async fn test_elf_block_entries_structure() {
     let handle = setup_engine().await;
     create_editor(&handle, "system").await;
-    let (elf_id, _) = bootstrap_elf_meta(&handle, "system").await;
+    let (elf_id, file_blocks) = bootstrap_elf_meta(&handle, "system").await;
 
     let block = handle.get_block(elf_id).await.unwrap();
     let contents = block.contents.as_object().unwrap();
     let entries = contents.get("entries").unwrap().as_object().unwrap();
 
-    // 验证所有预期目录路径
-    for path in ELF_DIR_PATHS {
-        assert!(entries.contains_key(*path), "Missing dir entry: {}", path);
-        let entry = entries.get(*path).unwrap().as_object().unwrap();
+    let dir_paths = derive_dir_paths();
+
+    // 验证所有自动推导的目录路径
+    for path in &dir_paths {
+        assert!(
+            entries.contains_key(path.as_str()),
+            "Missing dir entry: {}",
+            path
+        );
+        let entry = entries.get(path.as_str()).unwrap().as_object().unwrap();
         assert_eq!(entry.get("type").unwrap().as_str().unwrap(), "directory");
         assert_eq!(entry.get("source").unwrap().as_str().unwrap(), "outline");
     }
 
-    // 验证 hook 模板文件（真实 block 引用）
-    let hook_entry = entries
-        .get("git/hooks/pre-commit")
-        .expect("Missing hook file entry: git/hooks/pre-commit")
-        .as_object()
-        .unwrap();
-    assert_eq!(hook_entry.get("type").unwrap().as_str().unwrap(), "file");
-    // ID 不是 "hook-" 或 "dir-" 前缀，而是真实 block UUID
-    let hook_id = hook_entry.get("id").unwrap().as_str().unwrap();
-    assert!(
-        !hook_id.starts_with("hook-") && !hook_id.starts_with("dir-"),
-        "Hook file entry should reference a real block ID, got: {}",
-        hook_id
+    // 验证所有模板文件 block 引用
+    for (path, block_id) in &file_blocks {
+        let entry = entries
+            .get(path.as_str())
+            .unwrap_or_else(|| panic!("Missing file entry: {}", path))
+            .as_object()
+            .unwrap();
+        assert_eq!(entry.get("type").unwrap().as_str().unwrap(), "file");
+        assert_eq!(entry.get("id").unwrap().as_str().unwrap(), block_id);
+        assert_eq!(entry.get("source").unwrap().as_str().unwrap(), "outline");
+    }
+
+    // 总数 = 目录数 + 文件数（4 个模板文件）
+    assert_eq!(
+        entries.len(),
+        dir_paths.len() + TEMPLATE_FILES.len(),
+        "entries should have {} dirs + {} files",
+        dir_paths.len(),
+        TEMPLATE_FILES.len()
+    );
+}
+
+#[tokio::test]
+async fn test_all_template_blocks_have_content() {
+    let handle = setup_engine().await;
+    create_editor(&handle, "system").await;
+    let (_, file_blocks) = bootstrap_elf_meta(&handle, "system").await;
+
+    assert_eq!(
+        file_blocks.len(),
+        TEMPLATE_FILES.len(),
+        "Should have {} template blocks",
+        TEMPLATE_FILES.len()
     );
 
-    assert_eq!(entries.len(), ELF_DIR_PATHS.len() + 1); // dirs + 1 hook file
+    for (i, (path, block_id)) in file_blocks.iter().enumerate() {
+        let tmpl = &TEMPLATE_FILES[i];
+        let block = handle
+            .get_block(block_id.clone())
+            .await
+            .unwrap_or_else(|| panic!("Block not found for template: {}", path));
+
+        assert_eq!(block.name, tmpl.name, "Block name mismatch for {}", path);
+        assert_eq!(
+            block.block_type, tmpl.block_type,
+            "Block type mismatch for {}",
+            path
+        );
+
+        // 内容存储 key: markdown block → "markdown", code block → "text"
+        let content_key = if tmpl.block_type == "markdown" {
+            "markdown"
+        } else {
+            "text"
+        };
+        let content = block
+            .contents
+            .get(content_key)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(
+            !content.is_empty(),
+            "Block content should not be empty for {} (key: {})",
+            path,
+            content_key
+        );
+    }
 }
 
 #[tokio::test]
 async fn test_hook_block_has_template_content() {
     let handle = setup_engine().await;
     create_editor(&handle, "system").await;
-    let (_, hook_block_id) = bootstrap_elf_meta(&handle, "system").await;
+    let (_, file_blocks) = bootstrap_elf_meta(&handle, "system").await;
 
-    // hook block 应存在且包含模板内容
+    // 找到 pre-commit hook block
+    let hook_entry = file_blocks
+        .iter()
+        .find(|(path, _)| path == "git/hooks/pre-commit")
+        .expect("pre-commit hook should be in file_blocks");
+
     let hook_block = handle
-        .get_block(hook_block_id)
+        .get_block(hook_entry.1.clone())
         .await
         .expect("pre-commit hook block should exist");
     assert_eq!(hook_block.name, "pre-commit");
     assert_eq!(hook_block.block_type, "code");
 
-    // code.write 将内容存储在 "text" key 下
     let content = hook_block
         .contents
         .get("text")
@@ -177,6 +248,36 @@ async fn test_hook_block_has_template_content() {
     assert!(
         content.contains("ELFIEE_TASK_COMMIT"),
         "Hook block should contain the pre-commit template"
+    );
+}
+
+#[tokio::test]
+async fn test_skill_block_has_template_content() {
+    let handle = setup_engine().await;
+    create_editor(&handle, "system").await;
+    let (_, file_blocks) = bootstrap_elf_meta(&handle, "system").await;
+
+    let skill_entry = file_blocks
+        .iter()
+        .find(|(path, _)| path == "agents/elfiee-client/SKILL.md")
+        .expect("SKILL.md should be in file_blocks");
+
+    let skill_block = handle
+        .get_block(skill_entry.1.clone())
+        .await
+        .expect("SKILL.md block should exist");
+    assert_eq!(skill_block.name, "SKILL.md");
+    assert_eq!(skill_block.block_type, "markdown");
+
+    // markdown.write 存储在 "markdown" key 下
+    let content = skill_block
+        .contents
+        .get("markdown")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        content.contains("name: elfiee-client"),
+        "SKILL block should contain frontmatter"
     );
 }
 

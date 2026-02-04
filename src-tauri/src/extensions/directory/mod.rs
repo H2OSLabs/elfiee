@@ -9,6 +9,7 @@ use specta::Type;
 // ============================================================================
 
 pub mod directory_import;
+pub mod fs_scanner;
 pub use directory_import::*;
 
 pub mod directory_export;
@@ -64,6 +65,11 @@ pub struct DirectoryCreatePayload {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_type: Option<String>,
+    /// Optional: Link an existing block instead of creating a new one.
+    /// When provided (and entry_type is "file"), skips core.create and
+    /// registers the existing block_id in the directory index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing_block_id: Option<String>,
 }
 
 /// Payload for DirectoryDelete

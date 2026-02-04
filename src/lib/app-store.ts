@@ -6,7 +6,17 @@
 
 import { create } from 'zustand'
 import { TauriClient } from './tauri-client'
-import type { Editor, Block, FileMetadata, Event, Grant } from '@/bindings'
+import type {
+  Editor,
+  Block,
+  FileMetadata,
+  Event,
+  Grant,
+  AgentCreatePayload,
+  AgentCreateResult,
+  AgentEnableResult,
+  AgentDisableResult,
+} from '@/bindings'
 import { toast } from 'sonner'
 import {
   buildTreeFromEntries,
@@ -233,6 +243,28 @@ interface AppStore {
     blockId: string,
     editorId?: string
   ) => Promise<void>
+
+  // Agent operations
+  createAgent: (
+    fileId: string,
+    configDir: string,
+    name?: string,
+    editorId?: string,
+    provider?: string
+  ) => Promise<AgentCreateResult>
+  enableAgent: (
+    fileId: string,
+    agentBlockId: string
+  ) => Promise<AgentEnableResult>
+  disableAgent: (
+    fileId: string,
+    agentBlockId: string
+  ) => Promise<AgentDisableResult>
+  getAgentBlocks: (fileId: string) => Block[]
+
+  // Global collaborator operations
+  addGlobalCollaborator: (fileId: string, editorId: string) => Promise<void>
+  isGlobalCollaborator: (fileId: string, editorId: string) => boolean
 
   // Computed state
   selectedBlockId: string | null
@@ -1367,5 +1399,131 @@ export const useAppStore = create<AppStore>((set, get) => ({
       console.error(`Failed to close terminal session: ${errorMessage}`)
       throw error
     }
+  },
+
+  // Agent operations
+  createAgent: async (
+    fileId: string,
+    configDir: string,
+    name?: string,
+    editorId?: string,
+    provider?: string
+  ) => {
+    try {
+      const payload: AgentCreatePayload = {
+        config_dir: configDir,
+        name: name || null,
+        editor_id: editorId || null,
+        provider: provider || 'claude_code',
+      }
+      const result = await TauriClient.agent.createAgent(fileId, payload)
+      // Reload blocks to reflect the new Agent Block
+      await get().loadBlocks(fileId)
+      toast.success(result.message)
+      if (result.needs_restart) {
+        toast.info('Please restart Claude Code to apply changes')
+      }
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to create agent: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  enableAgent: async (fileId: string, agentBlockId: string) => {
+    try {
+      const result = await TauriClient.agent.enableAgent(fileId, agentBlockId)
+      // Reload blocks to reflect updated agent status
+      await get().loadBlocks(fileId)
+      toast.success(result.message)
+      if (result.warnings.length > 0) {
+        result.warnings.forEach((w) => toast.warning(w))
+      }
+      if (result.needs_restart) {
+        toast.info('Please restart Claude Code to apply changes')
+      }
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to enable agent: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  disableAgent: async (fileId: string, agentBlockId: string) => {
+    try {
+      const result = await TauriClient.agent.disableAgent(fileId, agentBlockId)
+      // Reload blocks to reflect updated agent status
+      await get().loadBlocks(fileId)
+      toast.success(result.message)
+      if (result.warnings.length > 0) {
+        result.warnings.forEach((w) => toast.warning(w))
+      }
+      return result
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to disable agent: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  getAgentBlocks: (fileId: string) => {
+    const blocks = get().getBlocks(fileId)
+    return blocks.filter((b) => b.block_type === 'agent')
+  },
+
+  // Global collaborator operations
+  addGlobalCollaborator: async (fileId: string, editorId: string) => {
+    // TODO: Replace hardcoded cap list with cap_id = "*" wildcard grant once CBAC
+    // supports it. Currently every new capability must be added here manually.
+    // Excludes core.grant / core.revoke (owner-only by design).
+    const caps = [
+      'core.read',
+      'core.create',
+      'core.link',
+      'core.unlink',
+      'core.delete',
+      'core.rename',
+      'core.change_type',
+      'core.update_metadata',
+      'markdown.read',
+      'markdown.write',
+      'code.read',
+      'code.write',
+      'directory.read',
+      'directory.write',
+      'directory.create',
+      'directory.delete',
+      'directory.rename',
+      'terminal.init',
+      'terminal.execute',
+      'terminal.save',
+      'terminal.close',
+      'task.read',
+      'task.write',
+      'task.commit',
+    ]
+    try {
+      for (const cap of caps) {
+        await TauriClient.editor.grantCapability(fileId, editorId, cap, '*')
+      }
+      await get().loadGrants(fileId)
+      await get().loadEvents(fileId)
+      toast.success('Global collaborator added')
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to add global collaborator: ${errorMessage}`)
+      throw error
+    }
+  },
+
+  isGlobalCollaborator: (fileId: string, editorId: string) => {
+    const grants = get().getGrants(fileId)
+    return grants.some((g) => g.editor_id === editorId && g.block_id === '*')
   },
 }))

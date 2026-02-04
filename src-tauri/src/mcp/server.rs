@@ -3,6 +3,7 @@
 //! Uses rmcp's macro system for clean tool definitions.
 //! All tools call EngineManager directly, no intermediate layers.
 
+use crate::extensions::agent::AgentContents;
 use crate::mcp;
 use crate::models::Command;
 use crate::state::AppState;
@@ -27,10 +28,17 @@ use std::sync::Arc;
 ///
 /// Provides MCP protocol access to Elfiee's capabilities.
 /// Runs as an independent SSE server, sharing AppState with the GUI.
+///
+/// When `agent_block_id` is set, this server is bound to a specific agent
+/// and `resolve_agent_editor_id` returns that agent's editor deterministically.
+/// When `agent_block_id` is None, this is the management port (47200) and
+/// falls back to the GUI active editor.
 #[derive(Clone)]
 pub struct ElfieeMcpServer {
     app_state: Arc<AppState>,
     tool_router: ToolRouter<Self>,
+    /// Bound agent block ID (per-agent mode) or None (management port)
+    agent_block_id: Option<String>,
 }
 
 // ============================================================================
@@ -144,6 +152,8 @@ pub struct DirectoryCreateInput {
     pub content: Option<String>,
     /// Block type for files: markdown, code
     pub block_type: Option<String>,
+    /// Optional: use an existing block ID instead of creating a new block
+    pub existing_block_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -257,6 +267,44 @@ pub struct EditorInput {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskCreateInput {
+    /// Path to the .elf project file
+    pub project: String,
+    /// Name for the new task
+    pub name: String,
+    /// Optional description for the task
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskWriteInput {
+    /// Path to the .elf project file
+    pub project: String,
+    /// Task block ID
+    pub block_id: String,
+    /// Markdown content to write
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskCommitInput {
+    /// Path to the .elf project file
+    pub project: String,
+    /// Task block ID to commit
+    pub block_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskLinkInput {
+    /// Path to the .elf project file
+    pub project: String,
+    /// Task block ID
+    pub task_id: String,
+    /// Block ID to link as implementation
+    pub block_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecInput {
     /// Path to the .elf project file
     pub project: String,
@@ -274,10 +322,14 @@ pub struct ExecInput {
 
 #[tool_router]
 impl ElfieeMcpServer {
-    /// Create a new MCP server instance
-    pub fn new(app_state: Arc<AppState>) -> Self {
+    /// Create a new MCP server instance.
+    ///
+    /// - `agent_block_id = None`: management port mode (fallback to GUI active editor)
+    /// - `agent_block_id = Some(id)`: per-agent mode (deterministic editor identity)
+    pub fn new(app_state: Arc<AppState>, agent_block_id: Option<String>) -> Self {
         Self {
             app_state,
+            agent_block_id,
             tool_router: Self::tool_router(),
         }
     }
@@ -312,6 +364,30 @@ impl ElfieeMcpServer {
             .ok_or_else(|| mcp::engine_not_found(file_id))
     }
 
+    /// Resolve the editor ID for MCP operations.
+    ///
+    /// In per-agent mode (`agent_block_id` is set), deterministically returns
+    /// that agent's `editor_id` from its AgentContents.
+    ///
+    /// In management port mode (`agent_block_id` is None), falls back to
+    /// the GUI active editor.
+    async fn resolve_agent_editor_id(&self, file_id: &str) -> Result<String, McpError> {
+        // Per-agent mode: deterministic lookup
+        if let Some(agent_id) = &self.agent_block_id {
+            let handle = self.get_engine(file_id)?;
+            let block = handle
+                .get_block(agent_id.clone())
+                .await
+                .ok_or_else(|| mcp::block_not_found(agent_id))?;
+            let contents: AgentContents = serde_json::from_value(block.contents.clone())
+                .map_err(|e| mcp::invalid_payload(format!("Invalid agent contents: {}", e)))?;
+            return Ok(contents.editor_id);
+        }
+
+        // Management port fallback: GUI active editor
+        self.get_editor_id(file_id)
+    }
+
     /// Execute a capability and return rich result with updated state
     async fn execute_capability(
         &self,
@@ -321,7 +397,7 @@ impl ElfieeMcpServer {
         payload: serde_json::Value,
     ) -> Result<CallToolResult, McpError> {
         let file_id = self.get_file_id(project)?;
-        let editor_id = self.get_editor_id(&file_id)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
         let handle = self.get_engine(&file_id)?;
 
         let target_block_id = block_id.clone().unwrap_or_default();
@@ -334,6 +410,9 @@ impl ElfieeMcpServer {
 
         match handle.process_command(cmd).await {
             Ok(events) => {
+                // Notify frontend of state change
+                let _ = self.app_state.state_changed_tx.send(file_id.clone());
+
                 let mut result = json!({
                     "ok": true,
                     "capability": capability,
@@ -451,6 +530,70 @@ impl ElfieeMcpServer {
         summary["metadata"] = meta;
 
         summary
+    }
+
+    /// Capture terminal output with quiescence detection.
+    ///
+    /// Polls the output buffer until:
+    /// - Output has been received and no new data arrives for 1 second, OR
+    /// - No output at all after 5 seconds, OR
+    /// - Maximum timeout of 30 seconds reached
+    async fn capture_terminal_output(
+        buffers: &dashmap::DashMap<String, std::sync::Arc<std::sync::Mutex<Vec<u8>>>>,
+        block_id: &str,
+    ) -> String {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let quiescence = Duration::from_secs(1);
+        let no_output_timeout = Duration::from_secs(5);
+        let max_timeout = Duration::from_secs(30);
+
+        let mut last_len = 0usize;
+        let mut last_change = Instant::now();
+        let mut ever_had_output = false;
+
+        // Initial delay for shell to start processing
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        loop {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let current_len = buffers
+                .get(block_id)
+                .map(|buf| buf.lock().unwrap().len())
+                .unwrap_or(0);
+
+            if current_len > last_len {
+                last_len = current_len;
+                last_change = Instant::now();
+                ever_had_output = true;
+            }
+
+            // Quiescence: output received but stopped arriving
+            if ever_had_output && last_change.elapsed() >= quiescence {
+                break;
+            }
+
+            // No output at all for too long
+            if !ever_had_output && start.elapsed() >= no_output_timeout {
+                break;
+            }
+
+            // Hard timeout
+            if start.elapsed() >= max_timeout {
+                break;
+            }
+        }
+
+        // Read the buffer content
+        buffers
+            .get(block_id)
+            .map(|buf| {
+                let data = buf.lock().unwrap();
+                String::from_utf8_lossy(&data).to_string()
+            })
+            .unwrap_or_default()
     }
 
     /// Provide actionable hints for common errors
@@ -663,7 +806,7 @@ impl ElfieeMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let payload = json!({
             "name": input.name,
-            "type": input.block_type
+            "block_type": input.block_type
         });
         self.execute_capability(&input.project, "core.create", input.parent_id, payload)
             .await
@@ -712,7 +855,7 @@ impl ElfieeMcpServer {
             "core.link",
             Some(input.parent_id),
             json!({
-                "child_id": input.child_id,
+                "target_id": input.child_id,
                 "relation": input.relation
             }),
         )
@@ -730,7 +873,7 @@ impl ElfieeMcpServer {
             "core.unlink",
             Some(input.parent_id),
             json!({
-                "child_id": input.child_id,
+                "target_id": input.child_id,
                 "relation": input.relation
             }),
         )
@@ -747,7 +890,7 @@ impl ElfieeMcpServer {
             &input.project,
             "core.change_type",
             Some(input.block_id),
-            json!({ "new_type": input.new_type }),
+            json!({ "block_type": input.new_type }),
         )
         .await
     }
@@ -933,6 +1076,9 @@ impl ElfieeMcpServer {
         if let Some(block_type) = input.block_type {
             payload["block_type"] = json!(block_type);
         }
+        if let Some(existing_block_id) = input.existing_block_id {
+            payload["existing_block_id"] = json!(existing_block_id);
+        }
 
         self.execute_capability(
             &input.project,
@@ -1022,18 +1168,46 @@ impl ElfieeMcpServer {
         &self,
         Parameters(input): Parameters<DirectoryExportInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut payload = json!({ "target_path": input.target_path });
-        if let Some(source_path) = input.source_path {
-            payload["source_path"] = json!(source_path);
-        }
+        let file_id = self.get_file_id(&input.project)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
 
-        self.execute_capability(
-            &input.project,
-            "directory.export",
-            Some(input.block_id),
-            payload,
+        let payload = crate::extensions::directory::DirectoryExportPayload {
+            target_path: input.target_path,
+            source_path: input.source_path,
+        };
+
+        match crate::commands::checkout::do_checkout_workspace(
+            &self.app_state,
+            &file_id,
+            &editor_id,
+            &input.block_id,
+            &payload,
         )
         .await
+        {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "capability": "directory.export",
+                    "editor": editor_id,
+                    "target_path": payload.target_path,
+                    "message": "Directory exported successfully",
+                }))
+                .unwrap(),
+            )])),
+            Err(e) => {
+                let hint = Self::error_hint("directory.export", &e);
+                Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "capability": "directory.export",
+                        "error": e,
+                        "hint": hint,
+                    }))
+                    .unwrap(),
+                )]))
+            }
+        }
     }
 
     // ========================================================================
@@ -1046,18 +1220,39 @@ impl ElfieeMcpServer {
         &self,
         Parameters(input): Parameters<TerminalInitInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut payload = json!({});
-        if let Some(shell) = input.shell {
-            payload["shell"] = json!(shell);
-        }
+        let file_id = self.get_file_id(&input.project)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
 
-        self.execute_capability(
-            &input.project,
-            "terminal.init",
-            Some(input.block_id),
-            payload,
+        let payload = json!({
+            "cols": 80,
+            "rows": 24,
+            "block_id": input.block_id,
+            "editor_id": editor_id,
+            "file_id": file_id,
+        });
+
+        // Record terminal.init event
+        let result = self
+            .execute_capability(
+                &input.project,
+                "terminal.init",
+                Some(input.block_id.clone()),
+                payload,
+            )
+            .await?;
+
+        // Actually start a PTY session (MCP mode — no frontend events)
+        crate::extensions::terminal::commands::start_pty_for_mcp(
+            &self.app_state.terminal_sessions,
+            &self.app_state.terminal_output_buffers,
+            &input.block_id,
+            80,
+            24,
+            None,
         )
-        .await
+        .map_err(|e| mcp::invalid_payload(format!("Failed to start PTY: {}", e)))?;
+
+        Ok(result)
     }
 
     /// Execute a command in a terminal block
@@ -1066,13 +1261,62 @@ impl ElfieeMcpServer {
         &self,
         Parameters(input): Parameters<TerminalExecuteInput>,
     ) -> Result<CallToolResult, McpError> {
-        self.execute_capability(
-            &input.project,
-            "terminal.execute",
-            Some(input.block_id),
-            json!({ "command": input.command }),
-        )
-        .await
+        // Record terminal.execute event (best effort — don't fail if this errors)
+        let _ = self
+            .execute_capability(
+                &input.project,
+                "terminal.execute",
+                Some(input.block_id.clone()),
+                json!({ "command": input.command }),
+            )
+            .await;
+
+        // Check if session exists
+        {
+            let sessions = self.app_state.terminal_sessions.lock().unwrap();
+            if !sessions.contains_key(&input.block_id) {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "error": "Terminal session not found",
+                        "hint": "Call elfiee_terminal_init first to start a terminal session.",
+                    }))
+                    .unwrap(),
+                )]));
+            }
+        }
+
+        // Clear output buffer before sending command
+        if let Some(buf) = self.app_state.terminal_output_buffers.get(&input.block_id) {
+            buf.lock().unwrap().clear();
+        }
+
+        // Write command + newline to PTY
+        {
+            let mut sessions = self.app_state.terminal_sessions.lock().unwrap();
+            if let Some(session) = sessions.get_mut(&input.block_id) {
+                crate::extensions::terminal::pty::write(
+                    &mut *session.writer,
+                    &format!("{}\n", input.command),
+                )
+                .map_err(|e| mcp::invalid_payload(format!("Failed to write to PTY: {}", e)))?;
+            }
+        }
+
+        // Capture output with quiescence detection
+        let output =
+            Self::capture_terminal_output(&self.app_state.terminal_output_buffers, &input.block_id)
+                .await;
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "block_id": input.block_id,
+                "command": input.command,
+                "output": output,
+            }))
+            .unwrap(),
+        )]))
     }
 
     /// Save terminal session content
@@ -1085,7 +1329,7 @@ impl ElfieeMcpServer {
             &input.project,
             "terminal.save",
             Some(input.block_id),
-            json!({ "content": input.content }),
+            json!({ "saved_content": input.content, "saved_at": crate::utils::time::now_utc() }),
         )
         .await
     }
@@ -1120,10 +1364,11 @@ impl ElfieeMcpServer {
         self.execute_capability(
             &input.project,
             "core.grant",
-            Some(input.block_id),
+            Some(input.block_id.clone()),
             json!({
-                "editor_id": input.editor_id,
-                "cap_id": input.cap_id
+                "target_editor": input.editor_id,
+                "capability": input.cap_id,
+                "target_block": input.block_id
             }),
         )
         .await
@@ -1140,10 +1385,11 @@ impl ElfieeMcpServer {
         self.execute_capability(
             &input.project,
             "core.revoke",
-            Some(input.block_id),
+            Some(input.block_id.clone()),
             json!({
-                "editor_id": input.editor_id,
-                "cap_id": input.cap_id
+                "target_editor": input.editor_id,
+                "capability": input.cap_id,
+                "target_block": input.block_id
             }),
         )
         .await
@@ -1159,10 +1405,11 @@ impl ElfieeMcpServer {
         &self,
         Parameters(input): Parameters<EditorInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut payload = json!({ "editor_id": input.editor_id });
-        if let Some(name) = input.name {
-            payload["name"] = json!(name);
-        }
+        let name = input.name.unwrap_or_else(|| input.editor_id.clone());
+        let payload = json!({
+            "name": name,
+            "editor_id": input.editor_id,
+        });
 
         self.execute_capability(&input.project, "core.editor_create", None, payload)
             .await
@@ -1179,6 +1426,153 @@ impl ElfieeMcpServer {
             "core.editor_delete",
             None,
             json!({ "editor_id": input.editor_id }),
+        )
+        .await
+    }
+
+    // ========================================================================
+    // Task Operations
+    // ========================================================================
+
+    /// Create a new task block
+    #[tool(
+        description = "Create a new task block for tracking work. Returns the task block ID. Use elfiee_task_link to link implementation blocks, then elfiee_task_commit to commit to git."
+    )]
+    async fn elfiee_task_create(
+        &self,
+        Parameters(input): Parameters<TaskCreateInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let file_id = self.get_file_id(&input.project)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
+        let handle = self.get_engine(&file_id)?;
+
+        // 1. Create task block
+        let cmd = Command::new(
+            editor_id.clone(),
+            "core.create".to_string(),
+            String::new(),
+            json!({ "name": input.name, "block_type": "task" }),
+        );
+
+        let events = handle
+            .process_command(cmd)
+            .await
+            .map_err(|e| mcp::invalid_payload(format!("Failed to create task: {}", e)))?;
+
+        let task_block_id = events
+            .first()
+            .map(|ev| ev.entity.clone())
+            .unwrap_or_default();
+
+        // 2. If description provided, update metadata (best effort)
+        if let Some(description) = &input.description {
+            let meta_cmd = Command::new(
+                editor_id.clone(),
+                "core.update_metadata".to_string(),
+                task_block_id.clone(),
+                json!({ "metadata": { "description": description } }),
+            );
+            if let Err(e) = handle.process_command(meta_cmd).await {
+                log::warn!("Failed to set task description: {}", e);
+            }
+        }
+
+        // 3. Return result with block details
+        let mut result = json!({
+            "ok": true,
+            "created_block_id": task_block_id,
+            "name": input.name,
+            "block_type": "task",
+            "editor": editor_id,
+        });
+
+        if let Some(block) = handle.get_block(task_block_id.clone()).await {
+            result["block"] = Self::format_block_summary(&block);
+        }
+        if let Some(desc) = &input.description {
+            result["description"] = json!(desc);
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap(),
+        )]))
+    }
+
+    /// Write content to a task block
+    #[tool(
+        description = "Write or overwrite the markdown content of a task block. Use this to document the task requirements or progress."
+    )]
+    async fn elfiee_task_write(
+        &self,
+        Parameters(input): Parameters<TaskWriteInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.execute_capability(
+            &input.project,
+            "task.write",
+            Some(input.block_id),
+            json!({ "content": input.content }),
+        )
+        .await
+    }
+
+    /// Commit a task to git
+    #[tool(
+        description = "Commit a task: export linked code blocks to their git repositories, create a feature branch, and commit. Returns commit hash, branch name, and exported files."
+    )]
+    async fn elfiee_task_commit(
+        &self,
+        Parameters(input): Parameters<TaskCommitInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let file_id = self.get_file_id(&input.project)?;
+        let editor_id = self.resolve_agent_editor_id(&file_id).await?;
+
+        match crate::commands::task::do_commit_task(
+            &self.app_state,
+            &file_id,
+            &editor_id,
+            &input.block_id,
+        )
+        .await
+        {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "commit_hash": result.commit_hash,
+                    "branch_name": result.branch_name,
+                    "exported_files": result.exported_files,
+                }))
+                .unwrap(),
+            )])),
+            Err(e) => {
+                let hint = Self::error_hint("task.commit", &e);
+                Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::to_string_pretty(&json!({
+                        "ok": false,
+                        "error": e,
+                        "hint": hint,
+                    }))
+                    .unwrap(),
+                )]))
+            }
+        }
+    }
+
+    /// Link a block to a task as implementation
+    #[tool(
+        description = "Link a code or markdown block to a task as its implementation. Uses 'implement' relation. Idempotent — safe to call multiple times for the same pair."
+    )]
+    async fn elfiee_task_link(
+        &self,
+        Parameters(input): Parameters<TaskLinkInput>,
+    ) -> Result<CallToolResult, McpError> {
+        self.execute_capability(
+            &input.project,
+            "core.link",
+            Some(input.task_id),
+            json!({
+                "target_id": input.block_id,
+                "relation": "implement"
+            }),
         )
         .await
     }
@@ -1214,7 +1608,7 @@ impl rmcp::handler::server::ServerHandler for ElfieeMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             server_info: Implementation {
-                name: "elfiee".to_string(),
+                name: crate::commands::agent::MCP_SERVER_NAME.to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
             instructions: Some(

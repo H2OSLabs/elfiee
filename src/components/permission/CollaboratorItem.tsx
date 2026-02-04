@@ -10,10 +10,13 @@ import {
   MoreVertical,
   Settings,
   UserMinus,
+  Loader2,
+  Sparkles,
 } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ConfigureBotDialog } from './ConfigureBotDialog'
-import type { Editor, Grant } from '@/bindings'
+import type { AgentContents, Block, Editor, Grant } from '@/bindings'
 
 interface CollaboratorItemProps {
   blockId: string
@@ -29,13 +32,21 @@ interface CollaboratorItemProps {
   editor: Editor
   grants: Grant[]
   isOwner: boolean
+  isFileOwner?: boolean
   isActive: boolean
+  isGlobal?: boolean
   onGrantChange: (
     editorId: string,
     capability: string,
     granted: boolean
   ) => Promise<void>
   onRemoveAccess?: (editorId: string) => Promise<void>
+  agentBlock?: Block
+  onToggleAgentStatus?: (
+    agentBlockId: string,
+    currentStatus: string
+  ) => Promise<void>
+  onCreateAgent?: (editorId: string) => Promise<void>
 }
 
 // Permission mapping:
@@ -46,27 +57,46 @@ interface CollaboratorItemProps {
 //   - Directory: Represents directory.create, delete, rename, export capabilities
 // - Delete: core.delete (unified for all block types)
 const getAvailableCapabilities = (blockType: string) => {
-  if (blockType === 'code') {
-    return [
-      { id: 'code.read', label: 'Read', icon: BookOpen },
-      { id: 'code.write', label: 'Write', icon: Edit2 },
-      { id: 'core.delete', label: 'Delete', icon: Trash2 },
-    ]
-  } else if (blockType === 'directory') {
-    return [
-      { id: 'directory.read', label: 'Read', icon: BookOpen },
-      // Directory Write represents directory.create, directory.delete, directory.rename, directory.export
-      // Frontend shows as "Write" but backend checks these individual capabilities
-      { id: 'directory.write', label: 'Write', icon: Edit2 },
-      { id: 'core.delete', label: 'Delete', icon: Trash2 },
-    ]
-  } else {
-    // markdown and other types default to markdown capabilities
-    return [
-      { id: 'markdown.read', label: 'Read', icon: BookOpen },
-      { id: 'markdown.write', label: 'Write', icon: Edit2 },
-      { id: 'core.delete', label: 'Delete', icon: Trash2 },
-    ]
+  switch (blockType) {
+    case 'code':
+      return [
+        { id: 'code.read', label: 'Read', icon: BookOpen },
+        { id: 'code.write', label: 'Write', icon: Edit2 },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
+    case 'directory':
+      return [
+        { id: 'directory.read', label: 'Read', icon: BookOpen },
+        // Directory Write represents directory.create, directory.delete, directory.rename, directory.export
+        // Frontend shows as "Write" but backend checks these individual capabilities
+        { id: 'directory.write', label: 'Write', icon: Edit2 },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
+    case 'task':
+      return [
+        { id: 'task.read', label: 'Read', icon: BookOpen },
+        { id: 'task.write', label: 'Write', icon: Edit2 },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
+    case 'terminal':
+      return [
+        { id: 'terminal.execute', label: 'Execute', icon: Edit2 },
+        { id: 'terminal.save', label: 'Save', icon: BookOpen },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
+    case 'agent':
+      return [
+        { id: 'core.read', label: 'Read', icon: BookOpen },
+        { id: 'agent.enable', label: 'Manage', icon: Settings },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
+    default:
+      // markdown and other types default to markdown capabilities
+      return [
+        { id: 'markdown.read', label: 'Read', icon: BookOpen },
+        { id: 'markdown.write', label: 'Write', icon: Edit2 },
+        { id: 'core.delete', label: 'Delete', icon: Trash2 },
+      ]
   }
 }
 
@@ -76,20 +106,34 @@ export const CollaboratorItem = ({
   editor,
   grants,
   isOwner,
+  isFileOwner,
   isActive,
+  isGlobal,
   onGrantChange,
   onRemoveAccess,
+  agentBlock,
+  onToggleAgentStatus,
+  onCreateAgent,
 }: CollaboratorItemProps) => {
   const [loadingCapabilities, setLoadingCapabilities] = useState<Set<string>>(
     new Set()
   )
   const [isRemoving, setIsRemoving] = useState(false)
   const [showConfigDialog, setShowConfigDialog] = useState(false)
+  const [isTogglingAgent, setIsTogglingAgent] = useState(false)
+
+  // Derive agent status from the associated agent block
+  const agentContents = agentBlock?.contents as AgentContents | undefined
+  const agentStatus = agentContents?.status
+  const isAgentEnabled = agentStatus === 'enabled'
+
+  // Whether this editor has implicit full access (block owner or file owner)
+  const hasFullAccess = isOwner || !!isFileOwner
 
   // Check if editor has a specific capability for this block
   const hasCapability = (capabilityId: string): boolean => {
-    // Owner always has all capabilities
-    if (isOwner) return true
+    // Owner and file owner always have all capabilities
+    if (hasFullAccess) return true
 
     // Check if there's a grant for this capability
     return grants.some(
@@ -101,8 +145,8 @@ export const CollaboratorItem = ({
   }
 
   const handleTogglePermission = async (capabilityId: string) => {
-    // Owner permissions cannot be modified
-    if (isOwner) return
+    // Owner and file owner permissions cannot be modified
+    if (hasFullAccess) return
 
     const currentlyHas = hasCapability(capabilityId)
 
@@ -136,6 +180,23 @@ export const CollaboratorItem = ({
     }
   }
 
+  const handleToggleAgent = async () => {
+    setIsTogglingAgent(true)
+    try {
+      if (agentBlock && agentStatus && onToggleAgentStatus) {
+        // Agent exists → toggle enable/disable
+        await onToggleAgentStatus(agentBlock.block_id, agentStatus)
+      } else if (!agentBlock && onCreateAgent) {
+        // No agent yet → create one (auto-enabled)
+        await onCreateAgent(editor.editor_id)
+      }
+    } catch (error) {
+      console.error('Failed to toggle agent status:', error)
+    } finally {
+      setIsTogglingAgent(false)
+    }
+  }
+
   const isBot = editor.editor_type === 'Bot'
 
   // Get available capabilities for this block type
@@ -147,7 +208,7 @@ export const CollaboratorItem = ({
       <div className="mb-3 flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border bg-background shadow-sm">
-            {isOwner ? (
+            {isOwner || isFileOwner ? (
               <Crown className="h-4 w-4 text-amber-500" />
             ) : isBot ? (
               <Bot className="h-4 w-4 text-purple-500" />
@@ -169,6 +230,22 @@ export const CollaboratorItem = ({
                   Owner
                 </Badge>
               )}
+              {isFileOwner && !isOwner && (
+                <Badge
+                  variant="secondary"
+                  className="h-4 border-amber-200 bg-amber-100 px-1.5 text-[10px] text-amber-700 hover:bg-amber-100/80"
+                >
+                  File Owner
+                </Badge>
+              )}
+              {isGlobal && !isOwner && (
+                <Badge
+                  variant="secondary"
+                  className="h-4 border-blue-200 bg-blue-50 px-1.5 text-[10px] text-blue-600 hover:bg-blue-50/80"
+                >
+                  Global
+                </Badge>
+              )}
               {isActive && !isOwner && (
                 <Badge
                   variant="outline"
@@ -187,7 +264,7 @@ export const CollaboratorItem = ({
           </div>
         </div>
 
-        {!isOwner && (
+        {!isOwner && !isFileOwner && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -220,6 +297,63 @@ export const CollaboratorItem = ({
         )}
       </div>
 
+      {/* Agent Status Toggle - for all bot editors */}
+      {isBot && (
+        <div
+          className={`mb-3 ml-12 flex items-center justify-between rounded-md border px-3 py-2 transition-all ${
+            isAgentEnabled
+              ? 'border-green-200 bg-green-50/50 dark:border-green-900/50 dark:bg-green-900/20'
+              : 'border-border/50 bg-muted/20'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Sparkles
+              className={`h-3.5 w-3.5 ${
+                isAgentEnabled ? 'text-green-600' : 'text-muted-foreground'
+              }`}
+            />
+            <span
+              className={`text-xs font-medium ${
+                isAgentEnabled
+                  ? 'text-green-700 dark:text-green-400'
+                  : 'text-muted-foreground'
+              }`}
+            >
+              Agent Capabilities
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isTogglingAgent ? (
+              <div className="flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">
+                  Updating...
+                </span>
+              </div>
+            ) : (
+              <span
+                className={`text-[10px] font-medium transition-colors ${
+                  isAgentEnabled
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-muted-foreground'
+                }`}
+              >
+                {isAgentEnabled ? 'Active' : 'Inactive'}
+              </span>
+            )}
+
+            <Switch
+              checked={isAgentEnabled}
+              onCheckedChange={handleToggleAgent}
+              disabled={isTogglingAgent}
+              className="h-4 w-7 data-[state=checked]:bg-green-500"
+              data-testid={`agent-toggle-${editor.editor_id}`}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Bottom Row: Permissions */}
       <div className="flex flex-wrap items-center gap-3 pl-12">
         {availableCapabilities.map((capability) => {
@@ -231,10 +365,12 @@ export const CollaboratorItem = ({
             <div
               key={capability.id}
               onClick={() =>
-                !isOwner && !isLoading && handleTogglePermission(capability.id)
+                !hasFullAccess &&
+                !isLoading &&
+                handleTogglePermission(capability.id)
               }
               className={`group flex items-center gap-2 rounded-md px-2.5 py-1.5 transition-all ${
-                isOwner
+                hasFullAccess
                   ? 'cursor-not-allowed bg-muted/50'
                   : isLoading
                     ? 'cursor-wait bg-muted/50'
@@ -243,8 +379,10 @@ export const CollaboratorItem = ({
                       : 'cursor-pointer bg-muted/30 hover:bg-muted/50'
               } `}
               title={
-                isOwner
-                  ? 'Owner has all permissions'
+                hasFullAccess
+                  ? isFileOwner
+                    ? 'File owner has all permissions'
+                    : 'Owner has all permissions'
                   : isLoading
                     ? 'Updating permission...'
                     : checked
@@ -255,13 +393,13 @@ export const CollaboratorItem = ({
               <Checkbox
                 id={`${editor.editor_id}-${capability.id}`}
                 checked={checked}
-                disabled={isOwner || isLoading}
+                disabled={hasFullAccess || isLoading}
                 className="pointer-events-none h-4 w-4"
                 data-testid={`checkbox-${editor.editor_id}-${capability.id}`}
               />
               <div
                 className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
-                  isOwner
+                  hasFullAccess
                     ? 'text-muted-foreground'
                     : isLoading
                       ? 'text-muted-foreground'
@@ -282,11 +420,7 @@ export const CollaboratorItem = ({
         open={showConfigDialog}
         onOpenChange={setShowConfigDialog}
         botName={editor.name}
-        onSave={async (config) => {
-          console.log('Saving config:', config)
-          // TODO: Implement actual save logic
-          return Promise.resolve()
-        }}
+        agentBlock={agentBlock}
       />
     </div>
   )

@@ -1,13 +1,17 @@
+use crate::extensions::task::git::{git_commit_flow, is_git_repo, sanitize_branch_name};
+use crate::extensions::task::git_hooks::{
+    inject_git_hooks, is_hooks_injected, remove_git_hooks, PRE_COMMIT_HOOK_CONTENT,
+};
 /// Tauri commands for task operations.
 ///
 /// Implements the I/O side of the Split Pattern for task.commit:
 /// - Capability handler (extensions/task/task_commit.rs): validation + audit event
 /// - This module: auto-discover repos + file export + git operations
 /// - Git hooks injection/removal for linked repositories
+///
+/// Business logic is in `do_commit_task`, shared between Tauri command and MCP server.
 use crate::models::Command;
 use crate::state::AppState;
-use crate::utils::git::{git_commit_flow, is_git_repo, sanitize_branch_name};
-use crate::utils::git_hooks::{inject_git_hooks, is_hooks_injected, remove_git_hooks};
 use crate::utils::path_validator::validate_virtual_path;
 use serde::{Deserialize, Serialize};
 use specta::specta;
@@ -69,49 +73,95 @@ fn find_block_repo_path(
     None
 }
 
+/// Compute the elf hooks directory path from file_id's temp dir.
+fn get_elf_hooks_dir(file_id: &str, app_state: &AppState) -> Result<String, String> {
+    let temp_dir = app_state
+        .files
+        .get(file_id)
+        .map(|f| f.archive.temp_path().to_path_buf())
+        .ok_or_else(|| format!("File '{}' not found in state", file_id))?;
+    Ok(temp_dir
+        .join(".elf/git/hooks")
+        .to_string_lossy()
+        .to_string())
+}
+
+/// Read hook content from the .elf/ directory block's hook entry.
+///
+/// Traverses all blocks to find the `.elf/` directory block, then reads the
+/// `git/hooks/pre-commit` entry's referenced code block content.
+///
+/// Falls back to `PRE_COMMIT_HOOK_CONTENT` (compile-time template) if the
+/// .elf/ block or hook block is not found.
+async fn read_hook_content(
+    handle: &crate::engine::EngineHandle,
+    all_blocks: &HashMap<String, crate::models::Block>,
+) -> String {
+    // Find .elf/ directory block
+    let elf_block = all_blocks
+        .values()
+        .find(|b| b.name == ".elf" && b.block_type == "directory");
+
+    let elf_block = match elf_block {
+        Some(b) => b,
+        None => return PRE_COMMIT_HOOK_CONTENT.to_string(),
+    };
+
+    // Get hook entry from entries
+    let hook_block_id = elf_block
+        .contents
+        .get("entries")
+        .and_then(|v| v.as_object())
+        .and_then(|entries| entries.get("git/hooks/pre-commit"))
+        .and_then(|entry| entry.get("id"))
+        .and_then(|v| v.as_str());
+
+    let hook_block_id = match hook_block_id {
+        Some(id) => id.to_string(),
+        None => return PRE_COMMIT_HOOK_CONTENT.to_string(),
+    };
+
+    // Read hook block content
+    match handle.get_block(hook_block_id).await {
+        Some(block) => block
+            .contents
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| PRE_COMMIT_HOOK_CONTENT.to_string()),
+        None => PRE_COMMIT_HOOK_CONTENT.to_string(),
+    }
+}
+
+// ============================================================================
+// Business Function (shared by Tauri command and MCP server)
+// ============================================================================
+
 /// Execute a task commit: validate → auto-discover repo → export snapshots → git commit.
 ///
-/// This command follows the Split Pattern:
+/// Business logic shared between Tauri command and MCP server.
 /// 1. Calls task.commit capability handler (authorization + audit event)
 /// 2. Auto-discovers linked repo from downstream blocks
 /// 3. Verifies discovered path has .git
 /// 4. Copies downstream block snapshots to repo path
 /// 5. Executes git branch + add + commit flow
-///
-/// # Arguments
-/// * `file_id` - Elf file containing the task block
-/// * `task_block_id` - The task block to commit
-/// * `editor_id` - Optional editor ID (defaults to active editor)
-#[tauri::command]
-#[specta]
-pub async fn commit_task(
-    file_id: String,
-    task_block_id: String,
-    editor_id: Option<String>,
-    state: State<'_, AppState>,
+pub async fn do_commit_task(
+    app_state: &AppState,
+    file_id: &str,
+    editor_id: &str,
+    task_block_id: &str,
 ) -> Result<TaskCommitResult, String> {
     // Get engine handle
-    let handle = state
+    let handle = app_state
         .engine_manager
-        .get_engine(&file_id)
+        .get_engine(file_id)
         .ok_or_else(|| format!("File '{}' is not open", file_id))?;
-
-    // Determine effective editor_id
-    let effective_editor_id = if let Some(id) = editor_id {
-        id
-    } else {
-        state
-            .active_editors
-            .get(&file_id)
-            .map(|e| e.value().clone())
-            .ok_or("No active editor set for this file")?
-    };
 
     // Step 1: Execute task.commit capability (authorization + audit event)
     let cmd = Command::new(
-        effective_editor_id.clone(),
+        editor_id.to_string(),
         "task.commit".to_string(),
-        task_block_id.clone(),
+        task_block_id.to_string(),
         serde_json::json!({}),
     );
     let events = handle.process_command(cmd).await?;
@@ -150,7 +200,7 @@ pub async fn commit_task(
 
     // Step 4: Get task block info
     let task_block = handle
-        .get_block(task_block_id.clone())
+        .get_block(task_block_id.to_string())
         .await
         .ok_or("Task block not found after commit")?;
     let task_name = &task_block.name;
@@ -162,7 +212,7 @@ pub async fn commit_task(
     let mut last_branch_name = String::new();
 
     // Get elf hooks dir (stored in elf temp dir, auto-cleaned on crash/close)
-    let elf_hooks_dir = get_elf_hooks_dir(&file_id, &state)?;
+    let elf_hooks_dir = get_elf_hooks_dir(file_id, app_state)?;
 
     for (repo_path, block_entries) in &repo_blocks {
         // Verify repo_path is a git repository
@@ -173,12 +223,13 @@ pub async fn commit_task(
             ));
         }
 
-        // Auto-inject hooks if not already present
+        // Auto-inject hooks if not already present (reads hook content from block)
         if !is_hooks_injected(repo_path, &elf_hooks_dir).await {
             tokio::fs::create_dir_all(&elf_hooks_dir)
                 .await
                 .map_err(|e| format!("Failed to create hooks directory: {}", e))?;
-            if let Err(e) = inject_git_hooks(repo_path, &elf_hooks_dir).await {
+            let hook_content = read_hook_content(&handle, &all_blocks).await;
+            if let Err(e) = inject_git_hooks(repo_path, &elf_hooks_dir, &hook_content).await {
                 log::warn!("Failed to inject git hooks for {}: {}", repo_path, e);
             }
         }
@@ -236,14 +287,38 @@ pub async fn commit_task(
     })
 }
 
+// ============================================================================
+// Tauri Commands
+// ============================================================================
+
+/// Execute a task commit (Tauri command wrapper).
+#[tauri::command]
+#[specta]
+pub async fn commit_task(
+    file_id: String,
+    task_block_id: String,
+    editor_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<TaskCommitResult, String> {
+    // Determine effective editor_id
+    let effective_editor_id = if let Some(id) = editor_id {
+        id
+    } else {
+        state
+            .active_editors
+            .get(&file_id)
+            .map(|e| e.value().clone())
+            .ok_or("No active editor set for this file")?
+    };
+
+    do_commit_task(&state, &file_id, &effective_editor_id, &task_block_id).await
+}
+
 /// Inject git hooks into a linked repository (commit protect ON).
 ///
 /// Hooks are stored in the .elf temp dir, so they disappear on crash/close.
 /// Sets `core.hooksPath` to block direct commits and require task.commit workflow.
-///
-/// # Arguments
-/// * `file_id` - Elf file ID (used to locate temp dir)
-/// * `repo_path` - External project git repo root
+/// Hook content is read from the .elf/ block (event sourced).
 #[tauri::command]
 #[specta]
 pub async fn inject_hooks_for_repo(
@@ -261,10 +336,18 @@ pub async fn inject_hooks_for_repo(
         return Ok(());
     }
 
+    // Read hook content from .elf/ block (event sourced)
+    let handle = state
+        .engine_manager
+        .get_engine(&file_id)
+        .ok_or_else(|| format!("File '{}' is not open", file_id))?;
+    let all_blocks = handle.get_all_blocks().await;
+    let hook_content = read_hook_content(&handle, &all_blocks).await;
+
     tokio::fs::create_dir_all(&elf_hooks_dir)
         .await
         .map_err(|e| format!("Failed to create hooks directory: {}", e))?;
-    inject_git_hooks(&repo_path, &elf_hooks_dir).await
+    inject_git_hooks(&repo_path, &elf_hooks_dir, &hook_content).await
 }
 
 /// Remove git hooks from a linked repository (commit protect OFF).
@@ -291,17 +374,4 @@ pub async fn is_hooks_active(
 ) -> Result<bool, String> {
     let elf_hooks_dir = get_elf_hooks_dir(&file_id, &state)?;
     Ok(is_hooks_injected(&repo_path, &elf_hooks_dir).await)
-}
-
-/// Compute the elf hooks directory path from file_id's temp dir.
-fn get_elf_hooks_dir(file_id: &str, state: &AppState) -> Result<String, String> {
-    let temp_dir = state
-        .files
-        .get(file_id)
-        .map(|f| f.archive.temp_path().to_path_buf())
-        .ok_or_else(|| format!("File '{}' not found in state", file_id))?;
-    Ok(temp_dir
-        .join(".elf/git/hooks")
-        .to_string_lossy()
-        .to_string())
 }

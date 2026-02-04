@@ -59,16 +59,44 @@ impl Default for ScanOptions {
     }
 }
 
-/// Scan a directory and return a list of files
+/// Scan a directory and return a list of files.
+///
+/// Uses `filter_entry()` to prevent descent into hidden and ignored directories.
+/// Without `filter_entry()`, `continue` only skips the entry from results but
+/// WalkDir still descends into hidden/ignored directories (bug fixed here).
 pub fn scan_directory(root: &Path, options: &ScanOptions) -> Result<Vec<FileInfo>, String> {
     let mut files = Vec::new();
     let mut count = 0;
+
+    let ignore_hidden = options.ignore_hidden;
+    let ignore_patterns = options.ignore_patterns.clone();
 
     let walker = WalkDir::new(root)
         .max_depth(options.max_depth)
         .follow_links(options.follow_symlinks);
 
-    for entry in walker {
+    // filter_entry prevents descent into filtered directories.
+    // Depth 0 is the root entry itself — always allow it through since the
+    // caller explicitly chose to scan that path (it may be a hidden dir).
+    for entry in walker.into_iter().filter_entry(move |e| {
+        if e.depth() == 0 {
+            return true;
+        }
+
+        let name = e.file_name().to_string_lossy();
+
+        // Prevent descent into hidden directories
+        if ignore_hidden && name.starts_with('.') {
+            return false;
+        }
+
+        // Prevent descent into ignored directories
+        if ignore_patterns.iter().any(|p| name == *p) {
+            return false;
+        }
+
+        true
+    }) {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
 
@@ -78,21 +106,8 @@ pub fn scan_directory(root: &Path, options: &ScanOptions) -> Result<Vec<FileInfo
             return Err(format!("Too many files (limit: {})", options.max_files));
         }
 
-        // Skip hidden files
-        if options.ignore_hidden {
-            if let Some(name) = path.file_name() {
-                if name.to_string_lossy().starts_with('.') {
-                    continue;
-                }
-            }
-        }
-
-        // Skip ignored directories
-        let should_skip = options.ignore_patterns.iter().any(|pattern| {
-            path.components()
-                .any(|c| c.as_os_str().to_string_lossy() == *pattern)
-        });
-        if should_skip {
+        // Skip symlinks (they pass filter_entry but shouldn't be included in results)
+        if entry.path_is_symlink() {
             continue;
         }
 

@@ -45,6 +45,7 @@ describe('Sidebar', () => {
       setActiveEditor: setActiveEditorMock,
       deleteEditor: deleteEditorMock,
       getSystemEditorId: getSystemEditorIdMock,
+      isGlobalCollaborator: vi.fn().mockReturnValue(false),
     })
   })
 
@@ -75,6 +76,7 @@ describe('Sidebar', () => {
       setActiveEditor: setActiveEditorMock,
       deleteEditor: deleteEditorMock,
       getSystemEditorId: getSystemEditorIdMock,
+      isGlobalCollaborator: vi.fn().mockReturnValue(false),
     })
 
     renderSidebar()
@@ -104,6 +106,7 @@ describe('Sidebar', () => {
       setActiveEditor: setActiveEditorMock,
       deleteEditor: deleteEditorMock,
       getSystemEditorId: getSystemEditorIdMock,
+      isGlobalCollaborator: vi.fn().mockReturnValue(false),
     })
 
     renderSidebar()
@@ -141,6 +144,7 @@ describe('Sidebar', () => {
       setActiveEditor: setActiveEditorMock,
       deleteEditor: deleteEditorMock,
       getSystemEditorId: getSystemEditorIdMock,
+      isGlobalCollaborator: vi.fn().mockReturnValue(false),
     })
 
     renderSidebar()
@@ -184,6 +188,7 @@ describe('Sidebar', () => {
       setActiveEditor: setActiveEditorMock,
       deleteEditor: deleteEditorMock,
       getSystemEditorId: getSystemEditorIdMock,
+      isGlobalCollaborator: vi.fn().mockReturnValue(false),
     })
 
     renderSidebar()
@@ -217,6 +222,7 @@ describe('Sidebar', () => {
       setActiveEditor: setActiveEditorMock,
       deleteEditor: deleteEditorMock,
       getSystemEditorId: getSystemEditorIdMock,
+      isGlobalCollaborator: vi.fn().mockReturnValue(false),
     })
 
     renderSidebar()

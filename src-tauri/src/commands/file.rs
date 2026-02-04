@@ -175,6 +175,20 @@ pub async fn open_file(path: String, state: State<'_, AppState>) -> Result<Strin
     // Bootstrap editors (create system editor if none exist)
     bootstrap_editors(&file_id, &state).await?;
 
+    // Recover per-agent MCP servers for any enabled agents
+    let recovery_failures = crate::commands::agent::recover_agent_servers(&state, &file_id).await;
+    if !recovery_failures.is_empty() {
+        let details: Vec<String> = recovery_failures
+            .iter()
+            .map(|(name, err)| format!("'{}': {}", name, err))
+            .collect();
+        eprintln!(
+            "Agent recovery: {} agent(s) failed to recover: {}",
+            recovery_failures.len(),
+            details.join("; ")
+        );
+    }
+
     Ok(file_id)
 }
 
@@ -220,6 +234,9 @@ pub async fn save_file(file_id: String, state: State<'_, AppState>) -> Result<()
 #[tauri::command]
 #[specta]
 pub async fn close_file(file_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    // Shutdown per-agent MCP servers before engine shutdown
+    crate::commands::agent::shutdown_agent_servers(&state, &file_id).await;
+
     // Shutdown engine actor
     state.engine_manager.shutdown_engine(&file_id).await?;
 

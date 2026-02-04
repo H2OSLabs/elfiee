@@ -735,10 +735,6 @@ export const commands = {
   },
   /**
    * Materialize blocks to the external file system (Checkout).
-   *
-   * This command implements the bottom-layer I/O ability:
-   * 1. Calls the `directory.export` capability for authorization and auditing.
-   * 2. If authorized, performs the 'checkout' by writing block contents to the target path.
    */
   async checkoutWorkspace(
     fileId: string,
@@ -760,19 +756,7 @@ export const commands = {
     }
   },
   /**
-   * Execute a task commit: validate → auto-discover repo → export snapshots → git commit.
-   *
-   * This command follows the Split Pattern:
-   * 1. Calls task.commit capability handler (authorization + audit event)
-   * 2. Auto-discovers linked repo from downstream blocks
-   * 3. Verifies discovered path has .git
-   * 4. Copies downstream block snapshots to repo path
-   * 5. Executes git branch + add + commit flow
-   *
-   * # Arguments
-   * * `file_id` - Elf file containing the task block
-   * * `task_block_id` - The task block to commit
-   * * `editor_id` - Optional editor ID (defaults to active editor)
+   * Execute a task commit (Tauri command wrapper).
    */
   async commitTask(
     fileId: string,
@@ -798,10 +782,7 @@ export const commands = {
    *
    * Hooks are stored in the .elf temp dir, so they disappear on crash/close.
    * Sets `core.hooksPath` to block direct commits and require task.commit workflow.
-   *
-   * # Arguments
-   * * `file_id` - Elf file ID (used to locate temp dir)
-   * * `repo_path` - External project git repo root
+   * Hook content is read from the .elf/ block (event sourced).
    */
   async injectHooksForRepo(
     fileId: string,
@@ -994,14 +975,234 @@ export const commands = {
       else return { status: 'error', error: e as any }
     }
   },
+  /**
+   * Create an Agent Block bound to a .claude/ directory and auto-enable it.
+   */
+  async agentCreate(
+    fileId: string,
+    payload: AgentCreatePayload
+  ): Promise<Result<AgentCreateResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('agent_create', { fileId, payload }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Enable an Agent Block: recreate symlink and inject MCP config.
+   */
+  async agentEnable(
+    fileId: string,
+    agentBlockId: string
+  ): Promise<Result<AgentEnableResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('agent_enable', { fileId, agentBlockId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
+  /**
+   * Disable an Agent Block: remove symlink and MCP config.
+   */
+  async agentDisable(
+    fileId: string,
+    agentBlockId: string
+  ): Promise<Result<AgentDisableResult, string>> {
+    try {
+      return {
+        status: 'ok',
+        data: await TAURI_INVOKE('agent_disable', { fileId, agentBlockId }),
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e
+      else return { status: 'error', error: e as any }
+    }
+  },
 }
 
 /** user-defined events **/
+
+export const events = __makeEvents__<{
+  ptyOutputEvent: PtyOutputEvent
+  stateChangedEvent: StateChangedEvent
+}>({
+  ptyOutputEvent: 'pty-output-event',
+  stateChangedEvent: 'state-changed-event',
+})
 
 /** user-defined constants **/
 
 /** user-defined types **/
 
+/**
+ * Agent Block contents, storing per-AI-tool integration config.
+ *
+ * Stored in `Block.contents`.
+ *
+ * Key change from V1: binds to `config_dir` (absolute path) instead of Dir Block ID.
+ * `editor_id` is now required (not optional).
+ */
+export type AgentContents = {
+  /**
+   * Agent display name (default: "elfiee")
+   */
+  name: string
+  /**
+   * AI tool provider identifier.
+   *
+   * Examples: "claude_code", "cursor", "windsurf"
+   * Used to determine provider-specific behavior (symlink paths, MCP config format, etc.)
+   */
+  provider?: string
+  /**
+   * Absolute path to the AI tool's config directory this agent is bound to.
+   *
+   * Examples:
+   * - Claude Code: "/home/user/repo-a/.claude"
+   * - Cursor: "/home/user/repo-a/.cursor"
+   *
+   * Used to derive:
+   * - Symlink target: `{config_dir}/skills/elfiee-client/`
+   * - MCP config locations: `{config_dir.parent()}/.mcp.json` + `{config_dir}/mcp.json`
+   */
+  config_dir: string
+  /**
+   * Agent current status
+   */
+  status: AgentStatus
+  /**
+   * Bot editor_id associated with this agent (required).
+   * Used by per-agent MCP server to attribute operations to the correct identity.
+   */
+  editor_id: string
+}
+/**
+ * Payload for agent.create capability
+ */
+export type AgentCreatePayload = {
+  /**
+   * Agent display name (optional, default: "elfiee")
+   */
+  name?: string | null
+  /**
+   * AI tool provider identifier (optional, default: "claude_code")
+   */
+  provider?: string
+  /**
+   * Absolute path to the AI tool's config directory (required)
+   */
+  config_dir: string
+  /**
+   * Bot editor_id to associate with this agent.
+   * If not provided, the command layer auto-creates a bot editor.
+   */
+  editor_id?: string | null
+}
+/**
+ * Result type for agent.create Tauri command
+ */
+export type AgentCreateResult = {
+  /**
+   * Created Agent Block ID
+   */
+  agent_block_id: string
+  /**
+   * Agent status after creation
+   */
+  status: AgentStatus
+  /**
+   * Whether the user needs to restart Claude Code
+   */
+  needs_restart: boolean
+  /**
+   * Human-readable message
+   */
+  message: string
+}
+/**
+ * Payload for agent.disable capability
+ */
+export type AgentDisablePayload = {
+  /**
+   * Agent Block ID (required)
+   */
+  agent_block_id: string
+}
+/**
+ * Result type for agent.disable Tauri command
+ */
+export type AgentDisableResult = {
+  /**
+   * Agent Block ID
+   */
+  agent_block_id: string
+  /**
+   * Agent status after disable
+   */
+  status: AgentStatus
+  /**
+   * Human-readable message
+   */
+  message: string
+  /**
+   * Warnings for partial failures
+   */
+  warnings: string[]
+}
+/**
+ * Payload for agent.enable capability
+ */
+export type AgentEnablePayload = {
+  /**
+   * Agent Block ID (required)
+   */
+  agent_block_id: string
+}
+/**
+ * Result type for agent.enable Tauri command
+ */
+export type AgentEnableResult = {
+  /**
+   * Agent Block ID
+   */
+  agent_block_id: string
+  /**
+   * Agent status after enable
+   */
+  status: AgentStatus
+  /**
+   * Whether the user needs to restart Claude Code
+   */
+  needs_restart: boolean
+  /**
+   * Human-readable message
+   */
+  message: string
+  /**
+   * Warnings for partial failures (e.g. symlink OK but MCP config failed)
+   */
+  warnings: string[]
+}
+/**
+ * Agent enable/disable status
+ */
+export type AgentStatus =
+  /**
+   * Enabled: symlink exists, MCP config injected, MCP server running
+   */
+  | 'enabled'
+  /**
+   * Disabled: symlink cleaned, MCP config removed, MCP server stopped
+   */
+  | 'disabled'
 /**
  * Block 是 Elfiee 的基本内容单元。
  *
@@ -1118,6 +1319,12 @@ export type DirectoryCreatePayload = {
   source: string
   content?: string | null
   block_type?: string | null
+  /**
+   * Optional: Link an existing block instead of creating a new one.
+   * When provided (and entry_type is "file"), skips core.create and
+   * registers the existing block_id in the directory index.
+   */
+  existing_block_id?: string | null
 }
 /**
  * Payload for DirectoryDelete
@@ -1306,6 +1513,23 @@ export type MarkdownWritePayload = {
   content: string
 }
 /**
+ * Emitted when PTY produces output (high-frequency, from reader thread).
+ *
+ * The frontend terminal (xterm.js) decodes the base64 data and writes it to the screen.
+ * Only emitted by GUI-initiated PTY sessions (not MCP-initiated sessions which
+ * only write to the output buffer).
+ */
+export type PtyOutputEvent = {
+  /**
+   * Base64 encoded output data
+   */
+  data: string
+  /**
+   * The terminal block ID
+   */
+  block_id: string
+}
+/**
  * Payload for core.revoke capability
  *
  * This payload is used to revoke a capability from an editor for a specific block.
@@ -1324,6 +1548,14 @@ export type RevokePayload = {
    */
   target_block?: string
 }
+/**
+ * Emitted when backend state changes (e.g., blocks modified via MCP or Tauri commands).
+ *
+ * The frontend auto-refreshes blocks, grants, and events for the affected file.
+ * Sent through the `state_changed_tx` broadcast channel by both Tauri commands
+ * and the MCP server after successful command processing.
+ */
+export type StateChangedEvent = { file_id: string }
 /**
  * Full state snapshot at a specific point in time.
  */

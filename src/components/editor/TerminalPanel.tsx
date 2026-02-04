@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '@/lib/app-store'
+import { events } from '@/bindings'
 import { Button } from '@/components/ui/button'
 import {
   X,
@@ -269,22 +269,19 @@ export function TerminalPanel({ fileId, onClose }: TerminalPanelProps) {
       }, 50)
     })
 
-    // Listen for PTY output
-    const unlistenPromise = listen<{ data: string; block_id: string }>(
-      'pty-out',
-      (event) => {
-        if (event.payload.block_id === currentBlockId) {
-          // Decode base64 to UTF-8 properly (atob only handles Latin-1, corrupting UTF-8)
-          const binaryString = atob(event.payload.data)
-          const bytes = new Uint8Array(binaryString.length)
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i)
-          }
-          const decoded = new TextDecoder('utf-8').decode(bytes)
-          term.write(decoded)
+    // Listen for PTY output (typed event from events.rs)
+    const unlistenPromise = events.ptyOutputEvent.listen((event) => {
+      if (event.payload.block_id === currentBlockId) {
+        // Decode base64 to UTF-8 properly (atob only handles Latin-1, corrupting UTF-8)
+        const binaryString = atob(event.payload.data)
+        const bytes = new Uint8Array(binaryString.length)
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i)
         }
+        const decoded = new TextDecoder('utf-8').decode(bytes)
+        term.write(decoded)
       }
-    )
+    })
 
     // Listen for user input
     const disposable = term.onData((data) => {

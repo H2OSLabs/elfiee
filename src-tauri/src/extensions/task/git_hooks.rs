@@ -14,52 +14,25 @@ use std::path::Path;
 
 /// Pre-commit hook script template.
 ///
+/// Loaded from `templates/elf-meta/git/hooks/pre-commit` at compile time via `include_str!()`.
 /// Chain-calls original hook, then checks ELFIEE_TASK_COMMIT environment variable.
-/// `pub` for use by `elf_meta::bootstrap_elf_meta` when creating the hook block.
-pub const PRE_COMMIT_HOOK_CONTENT: &str = r#"#!/bin/sh
-# Elfiee managed hook — chain to original, then check Elfiee workflow
-# Auto-removed when Elfiee closes
-# Bypass all hooks: git commit --no-verify
-
-# ── Step 1: Chain-call original hook ──
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ORIGINAL_HOOKS_DIR=""
-
-# Case A: Project has custom core.hooksPath (e.g. husky → .husky/)
-if [ -f "$SCRIPT_DIR/../original-hooks-path" ]; then
-    ORIGINAL_HOOKS_DIR=$(cat "$SCRIPT_DIR/../original-hooks-path")
-# Case B: Project uses default .git/hooks/
-elif [ -x ".git/hooks/pre-commit" ]; then
-    ORIGINAL_HOOKS_DIR=".git/hooks"
-fi
-
-# Execute original hook (lint / format / test rules still apply)
-if [ -n "$ORIGINAL_HOOKS_DIR" ] && [ -x "$ORIGINAL_HOOKS_DIR/pre-commit" ]; then
-    "$ORIGINAL_HOOKS_DIR/pre-commit" "$@"
-    RESULT=$?
-    if [ $RESULT -ne 0 ]; then
-        exit $RESULT  # Original hook failed → reject, skip Elfiee check
-    fi
-fi
-
-# ── Step 2: Elfiee workflow check ──
-# Check if commit was initiated by task.commit (env var marker)
-if [ "$ELFIEE_TASK_COMMIT" = "1" ]; then
-    exit 0  # task.commit flow, allow
-fi
-
-echo "[Elfiee] Direct commit detected outside Elfiee workflow."
-echo "[Elfiee] Use task.commit in Elfiee for tracked commits."
-echo "[Elfiee] Bypass: git commit --no-verify"
-exit 1
-"#;
+///
+/// To modify the hook: edit `templates/elf-meta/git/hooks/pre-commit`, recompile, restart.
+/// This enables dogfooding — verify hook changes in Elfiee before they take effect.
+pub const PRE_COMMIT_HOOK_CONTENT: &str =
+    include_str!("../../../templates/elf-meta/git/hooks/pre-commit");
 
 /// Inject git hooks (set core.hooksPath to .elf/git/hooks/).
 ///
 /// # Arguments
 /// - `repo_path`: External project git repository root
 /// - `elf_hooks_dir`: Elfiee-managed hooks directory path (e.g. `.elf/git/hooks/`)
-pub async fn inject_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<(), String> {
+/// - `hook_content`: Pre-commit hook script content (read from block in event store)
+pub async fn inject_git_hooks(
+    repo_path: &str,
+    elf_hooks_dir: &str,
+    hook_content: &str,
+) -> Result<(), String> {
     // Ensure hooks directory exists
     std::fs::create_dir_all(elf_hooks_dir)
         .map_err(|e| format!("Failed to create hooks directory: {}", e))?;
@@ -85,10 +58,9 @@ pub async fn inject_git_hooks(repo_path: &str, elf_hooks_dir: &str) -> Result<()
         }
     }
 
-    // Write pre-commit hook
+    // Write pre-commit hook (content from block in event store)
     let hook_path = Path::new(elf_hooks_dir).join("pre-commit");
-    std::fs::write(&hook_path, PRE_COMMIT_HOOK_CONTENT)
-        .map_err(|e| format!("Failed to write hook: {}", e))?;
+    std::fs::write(&hook_path, hook_content).map_err(|e| format!("Failed to write hook: {}", e))?;
 
     // Set executable permissions (Unix)
     #[cfg(unix)]
@@ -199,7 +171,9 @@ mod tests {
         let hooks_dir = temp.path().join(".elf/git/hooks");
         let hooks_dir_str = hooks_dir.to_str().unwrap();
 
-        inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
+        inject_git_hooks(repo_path, hooks_dir_str, PRE_COMMIT_HOOK_CONTENT)
+            .await
+            .unwrap();
 
         // Verify core.hooksPath is set
         let hooks_path = git_exec(
@@ -231,7 +205,9 @@ mod tests {
         let hooks_dir_str = hooks_dir.to_str().unwrap();
 
         // Inject
-        inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
+        inject_git_hooks(repo_path, hooks_dir_str, PRE_COMMIT_HOOK_CONTENT)
+            .await
+            .unwrap();
         assert!(is_hooks_injected(repo_path, hooks_dir_str).await);
 
         // Remove
@@ -260,7 +236,9 @@ mod tests {
         let hooks_dir_str = hooks_dir.to_str().unwrap();
 
         // Inject Elfiee hooks
-        inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
+        inject_git_hooks(repo_path, hooks_dir_str, PRE_COMMIT_HOOK_CONTENT)
+            .await
+            .unwrap();
 
         // Verify original path was saved
         let original_path_file = temp.path().join(".elf/git/original-hooks-path");
@@ -289,7 +267,9 @@ mod tests {
 
         assert!(!is_hooks_injected(repo_path, hooks_dir_str).await);
 
-        inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
+        inject_git_hooks(repo_path, hooks_dir_str, PRE_COMMIT_HOOK_CONTENT)
+            .await
+            .unwrap();
         assert!(is_hooks_injected(repo_path, hooks_dir_str).await);
     }
 
@@ -300,7 +280,9 @@ mod tests {
         let hooks_dir = temp.path().join(".elf/git/hooks");
         let hooks_dir_str = hooks_dir.to_str().unwrap();
 
-        inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
+        inject_git_hooks(repo_path, hooks_dir_str, PRE_COMMIT_HOOK_CONTENT)
+            .await
+            .unwrap();
 
         // Create a file
         std::fs::write(temp.path().join("new.txt"), "content").unwrap();
@@ -318,7 +300,9 @@ mod tests {
         let hooks_dir = temp.path().join(".elf/git/hooks");
         let hooks_dir_str = hooks_dir.to_str().unwrap();
 
-        inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
+        inject_git_hooks(repo_path, hooks_dir_str, PRE_COMMIT_HOOK_CONTENT)
+            .await
+            .unwrap();
 
         // Create a file
         std::fs::write(temp.path().join("task.txt"), "task content").unwrap();
@@ -345,7 +329,9 @@ mod tests {
         let hooks_dir = temp.path().join(".elf/git/hooks");
         let hooks_dir_str = hooks_dir.to_str().unwrap();
 
-        inject_git_hooks(repo_path, hooks_dir_str).await.unwrap();
+        inject_git_hooks(repo_path, hooks_dir_str, PRE_COMMIT_HOOK_CONTENT)
+            .await
+            .unwrap();
 
         std::fs::write(temp.path().join("bypass.txt"), "bypass").unwrap();
         git_exec(repo_path, &["add", "."], &[]).await.unwrap();

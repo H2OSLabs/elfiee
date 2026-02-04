@@ -31,7 +31,14 @@ pub async fn execute_command(
         .ok_or_else(|| format!("File '{}' is not open", file_id))?;
 
     // Process command through engine actor
-    handle.process_command(cmd).await
+    let result = handle.process_command(cmd).await;
+
+    // Notify frontend of state change on success
+    if result.is_ok() {
+        let _ = state.state_changed_tx.send(file_id);
+    }
+
+    result
 }
 
 /// Get a specific block by ID from a file.
