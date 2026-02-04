@@ -8,6 +8,7 @@
 //! Business logic is in `do_*` functions, shared between Tauri commands,
 //! MCP server, and auto-disconnect handler (transport.rs).
 
+use crate::capabilities::registry::CapabilityRegistry;
 use crate::extensions::agent::{mcp_config, settings_config};
 use crate::extensions::agent::{
     AgentContents, AgentCreatePayload, AgentCreateResult, AgentDisableResult, AgentEnableResult,
@@ -19,13 +20,23 @@ use std::path::Path;
 use std::sync::Arc;
 use tauri::State;
 
+/// MCP server name used as the key in `.mcp.json` configuration files.
+pub const MCP_SERVER_NAME: &str = "elfiee";
+
 /// Create symlink from source to destination (cross-platform).
 ///
 /// On Unix: creates a symbolic link.
 /// On Windows: creates a directory junction (no admin privileges required).
 fn create_symlink_dir(src: &Path, dst: &Path) -> Result<(), String> {
-    // Remove existing symlink/junction if present
-    if dst.exists() || dst.read_link().is_ok() {
+    // If existing symlink/junction already points to the correct target, skip recreation
+    if let Ok(current_target) = dst.read_link() {
+        if current_target == src {
+            return Ok(());
+        }
+        // Points to wrong target — remove and recreate
+        remove_symlink_dir(dst)?;
+    } else if dst.exists() {
+        // Exists but is not a symlink — remove
         remove_symlink_dir(dst)?;
     }
 
@@ -144,12 +155,14 @@ fn perform_enable_io(config_dir: &str, elf_block_dir: &str, port: u16) -> (bool,
         .parent()
         .unwrap_or(Path::new(config_dir));
     let mcp_project_path = project_root.join(".mcp.json");
-    if let Err(e) = mcp_config::merge_server(&mcp_project_path, "elfiee", server_config.clone()) {
+    if let Err(e) =
+        mcp_config::merge_server(&mcp_project_path, MCP_SERVER_NAME, server_config.clone())
+    {
         warnings.push(format!("Failed to write .mcp.json: {}", e));
     }
 
     let mcp_claude_path = Path::new(config_dir).join("mcp.json");
-    if let Err(e) = mcp_config::merge_server(&mcp_claude_path, "elfiee", server_config) {
+    if let Err(e) = mcp_config::merge_server(&mcp_claude_path, MCP_SERVER_NAME, server_config) {
         warnings.push(format!("Failed to write .claude/mcp.json: {}", e));
     }
 
@@ -181,12 +194,12 @@ pub(crate) fn perform_disable_io(config_dir: &str) -> Vec<String> {
         .parent()
         .unwrap_or(Path::new(config_dir));
     let mcp_project_path = project_root.join(".mcp.json");
-    if let Err(e) = mcp_config::remove_server(&mcp_project_path, "elfiee") {
+    if let Err(e) = mcp_config::remove_server(&mcp_project_path, MCP_SERVER_NAME) {
         warnings.push(format!("Failed to remove .mcp.json: {}", e));
     }
 
     let mcp_claude_path = Path::new(config_dir).join("mcp.json");
-    if let Err(e) = mcp_config::remove_server(&mcp_claude_path, "elfiee") {
+    if let Err(e) = mcp_config::remove_server(&mcp_claude_path, MCP_SERVER_NAME) {
         warnings.push(format!("Failed to remove .claude/mcp.json: {}", e));
     }
 
@@ -286,38 +299,15 @@ pub async fn do_agent_create(
         .clone();
 
     // 6. Auto wildcard grants for the agent's editor
-    // TODO: Replace hardcoded cap list with cap_id = "*" wildcard grant once CBAC
-    // supports it. Currently every new capability must be added here manually.
-    // Excludes core.grant / core.revoke (owner-only by design).
+    // Dynamically get all registered capabilities except owner-only ones.
     let agent_editor_id = payload.editor_id.as_ref().unwrap();
-    let default_caps = [
-        "core.read",
-        "core.create",
-        "core.link",
-        "core.unlink",
-        "core.delete",
-        "core.rename",
-        "core.change_type",
-        "core.update_metadata",
-        "markdown.read",
-        "markdown.write",
-        "code.read",
-        "code.write",
-        "directory.read",
-        "directory.write",
-        "directory.create",
-        "directory.delete",
-        "directory.rename",
-        "directory.import",
-        "directory.export",
-        "terminal.init",
-        "terminal.execute",
-        "terminal.save",
-        "terminal.close",
-        "task.read",
-        "task.write",
-        "task.commit",
-    ];
+    let registry = CapabilityRegistry::new();
+    let default_caps = registry.get_grantable_cap_ids(&[
+        "core.grant",
+        "core.revoke",
+        "editor.create",
+        "editor.delete",
+    ]);
 
     for cap in &default_caps {
         let grant_cmd = Command::new(
@@ -534,11 +524,14 @@ pub async fn do_agent_disable(
 /// 3. Update .mcp.json with the new port
 /// 4. Refresh symlink (idempotent)
 ///
-/// Errors are logged but don't fail the file open.
-pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) {
+/// Returns a list of (agent_name, error_message) for agents that failed to recover.
+/// Successful recoveries are logged to stdout.
+pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(String, String)> {
+    let mut failures: Vec<(String, String)> = Vec::new();
+
     let handle = match app_state.engine_manager.get_engine(file_id) {
         Some(h) => h,
-        None => return,
+        None => return failures,
     };
 
     let blocks = handle.get_all_blocks().await;
@@ -566,11 +559,13 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) {
                 if let Some(ref elf_dir) = elf_block_dir {
                     let (_, warnings) = perform_enable_io(&contents.config_dir, elf_dir, port);
                     if !warnings.is_empty() {
+                        let warning_msg = warnings.join("; ");
                         eprintln!(
                             "Agent recovery '{}': I/O warnings: {}",
-                            block.name,
-                            warnings.join("; ")
+                            block.name, warning_msg
                         );
+                        failures
+                            .push((block.name.clone(), format!("I/O warnings: {}", warning_msg)));
                     }
                 }
                 println!("Agent recovery: Restored '{}' on port {}", block.name, port);
@@ -580,9 +575,12 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) {
                     "Agent recovery: Failed to start MCP server for '{}': {}",
                     block.name, e
                 );
+                failures.push((block.name.clone(), e));
             }
         }
     }
+
+    failures
 }
 
 /// Stop all per-agent MCP servers for agents in a specific file.

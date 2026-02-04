@@ -176,7 +176,18 @@ pub async fn open_file(path: String, state: State<'_, AppState>) -> Result<Strin
     bootstrap_editors(&file_id, &state).await?;
 
     // Recover per-agent MCP servers for any enabled agents
-    crate::commands::agent::recover_agent_servers(&state, &file_id).await;
+    let recovery_failures = crate::commands::agent::recover_agent_servers(&state, &file_id).await;
+    if !recovery_failures.is_empty() {
+        let details: Vec<String> = recovery_failures
+            .iter()
+            .map(|(name, err)| format!("'{}': {}", name, err))
+            .collect();
+        eprintln!(
+            "Agent recovery: {} agent(s) failed to recover: {}",
+            recovery_failures.len(),
+            details.join("; ")
+        );
+    }
 
     Ok(file_id)
 }

@@ -1608,7 +1608,7 @@ impl rmcp::handler::server::ServerHandler for ElfieeMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             server_info: Implementation {
-                name: "elfiee".to_string(),
+                name: crate::commands::agent::MCP_SERVER_NAME.to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
             instructions: Some(

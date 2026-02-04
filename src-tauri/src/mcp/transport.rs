@@ -105,12 +105,26 @@ pub async fn start_mcp_server(app_state: Arc<AppState>, port: u16) -> Result<(),
 /// Allocate the next available port for an agent MCP server.
 ///
 /// Ports are allocated sequentially from 47201. Range: 47201–47299.
+/// Wraps around when the counter exceeds the range, reusing freed ports.
 fn allocate_agent_port(app_state: &AppState) -> Result<u16, String> {
-    loop {
+    let max_attempts = 99; // Total ports in range
+    for _ in 0..max_attempts {
         let port = app_state.next_agent_port.fetch_add(1, Ordering::SeqCst);
+
+        // Wrap around when exceeding range
         if port > 47299 {
-            return Err("Agent port range exhausted (47201-47299)".to_string());
+            app_state.next_agent_port.store(47202, Ordering::SeqCst); // Reset (next call gets 47202+)
+            let port = 47201; // Use the first port for this attempt
+            if !app_state
+                .agent_servers
+                .iter()
+                .any(|e| e.value().port == port)
+            {
+                return Ok(port);
+            }
+            continue;
         }
+
         // Skip ports already in use by another agent
         if !app_state
             .agent_servers
@@ -120,6 +134,10 @@ fn allocate_agent_port(app_state: &AppState) -> Result<u16, String> {
             return Ok(port);
         }
     }
+    Err(format!(
+        "Agent port range exhausted: all {} ports (47201-47299) are in use",
+        max_attempts
+    ))
 }
 
 /// Start a per-agent MCP server on a dedicated port.
