@@ -44,7 +44,7 @@ const { mockStoreInstance, notifySubscribers } = vi.hoisted(() => {
     deleteEntry: vi.fn(),
     importDirectory: vi.fn(),
     checkoutWorkspace: vi.fn(),
-    getSystemEditorId: vi.fn(),
+    getSystemEditorId: vi.fn().mockResolvedValue('system-editor-default'),
     // Mock getters
     getFileMetadata: vi.fn(),
     getBlocks: vi.fn().mockReturnValue([]),
@@ -55,6 +55,16 @@ const { mockStoreInstance, notifySubscribers } = vi.hoisted(() => {
     getGrants: vi.fn().mockReturnValue([]),
     getOutlineTree: vi.fn().mockReturnValue([]),
     getLinkedRepos: vi.fn().mockReturnValue([]),
+    // Agent operations
+    createAgent: vi.fn(),
+    enableAgent: vi.fn(),
+    disableAgent: vi.fn(),
+    getAgentBlocks: vi.fn().mockReturnValue([]),
+    // Global collaborator operations
+    addGlobalCollaborator: vi.fn(),
+    isGlobalCollaborator: vi.fn().mockReturnValue(false),
+    // Block grants
+    getBlockGrants: vi.fn().mockReturnValue([]),
   })
 
   const instance = createInitialState()
@@ -90,6 +100,13 @@ vi.mock('@/lib/app-store', () => {
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
   Channel: vi.fn(),
+}))
+
+// Mock @tauri-apps/api/event (used by typed events in bindings.ts)
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+  once: vi.fn(() => Promise.resolve(() => {})),
+  emit: vi.fn(),
 }))
 
 // Mock @tauri-apps/plugin-dialog

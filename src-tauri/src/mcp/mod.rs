@@ -40,6 +40,7 @@
 //! - `elfiee_code_read/write` - Read/write code
 //! - `elfiee_directory_create/delete/rename/write/import/export` - Directory operations
 //! - `elfiee_terminal_init/execute/save/close` - Terminal operations
+//! - `elfiee_task_create/write/commit/link` - Task operations
 //! - `elfiee_grant/revoke` - Permission operations
 //! - `elfiee_editor_create/delete` - Editor operations
 //! - `elfiee_exec` - Execute any capability
@@ -48,7 +49,7 @@ pub mod server;
 pub mod transport;
 
 pub use server::ElfieeMcpServer;
-pub use transport::{start_mcp_server, MCP_PORT};
+pub use transport::{start_agent_mcp_server, start_mcp_server, stop_agent_mcp_server, MCP_PORT};
 
 use rmcp::ErrorData as McpError;
 

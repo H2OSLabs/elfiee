@@ -42,6 +42,7 @@ use specta::Type;
 // ============================================================================
 
 pub mod commands;
+pub mod pty;
 pub mod state;
 pub mod terminal_close;
 pub mod terminal_execute;

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CollaboratorItem } from './CollaboratorItem'
-import type { Editor, Grant } from '@/bindings'
+import type { Block, Editor, Grant } from '@/bindings'
 
 describe('CollaboratorItem Component', () => {
   const mockOnGrantChange = vi.fn()
@@ -438,6 +438,151 @@ describe('CollaboratorItem Component', () => {
     })
   })
 
+  describe('File Owner Behavior', () => {
+    it('should show File Owner badge when isFileOwner is true and not block owner', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      expect(screen.getByText('File Owner')).toBeInTheDocument()
+      expect(screen.queryByText('Owner')).not.toBeInTheDocument()
+    })
+
+    it('should show all permissions as checked and disabled for file owner', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const checkboxes = screen.getAllByRole('checkbox')
+      checkboxes.forEach((checkbox) => {
+        expect(checkbox).toBeDisabled()
+      })
+    })
+
+    it('should not call onGrantChange when clicking permissions for file owner', async () => {
+      const user = userEvent.setup()
+
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const readLabel = screen.getByText('Read').closest('div')
+      if (readLabel) {
+        await user.click(readLabel)
+      }
+
+      expect(mockOnGrantChange).not.toHaveBeenCalled()
+    })
+
+    it('should not show dropdown menu for file owner', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          onRemoveAccess={mockOnRemoveAccess}
+        />
+      )
+
+      // File owner should not have the more options dropdown
+      expect(
+        screen.queryByTestId(`menu-trigger-${mockHumanEditor.editor_id}`)
+      ).not.toBeInTheDocument()
+    })
+
+    it('should show Crown icon for file owner', () => {
+      const { container } = render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isFileOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const crownIcon = container.querySelector('.text-amber-500')
+      expect(crownIcon).toBeInTheDocument()
+    })
+  })
+
+  describe('Agent Block Permissions', () => {
+    it('should show Read, Manage, Delete for agent block type', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="agent"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      expect(screen.getByText('Read')).toBeInTheDocument()
+      expect(screen.getByText('Manage')).toBeInTheDocument()
+      expect(screen.getByText('Delete')).toBeInTheDocument()
+      // Should NOT show Write (markdown default)
+      expect(screen.queryByText('Write')).not.toBeInTheDocument()
+    })
+
+    it('should show all agent permissions checked for owner', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="agent"
+          editor={mockHumanEditor}
+          grants={[]}
+          isOwner={true}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const checkboxes = screen.getAllByRole('checkbox')
+      expect(checkboxes).toHaveLength(3) // Read, Manage, Delete
+      checkboxes.forEach((checkbox) => {
+        expect(checkbox).toBeDisabled()
+      })
+    })
+  })
+
   describe('Wildcard Grants', () => {
     it('should recognize wildcard grants for permissions', () => {
       const wildcardGrants: Grant[] = [
@@ -463,6 +608,188 @@ describe('CollaboratorItem Component', () => {
       // Should display editor name and permissions
       expect(screen.getByText('Alice')).toBeInTheDocument()
       expect(screen.getByText('Read')).toBeInTheDocument()
+    })
+  })
+
+  describe('Agent Status Toggle', () => {
+    const mockOnToggleAgentStatus = vi.fn()
+
+    const mockAgentBlock: Block = {
+      block_id: 'agent-block-789',
+      name: 'CodeReviewer Agent',
+      block_type: 'agent',
+      owner: 'owner-123',
+      contents: {
+        name: 'CodeReviewer',
+        config_dir: '/home/user/repo/.claude',
+        editor_id: 'bot-456',
+        status: 'enabled',
+      },
+      children: {},
+      metadata: {},
+    }
+
+    beforeEach(() => {
+      mockOnToggleAgentStatus.mockClear()
+    })
+
+    it('should show toggle switch for bot editor with agent block', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={mockAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      const toggle = screen.getByTestId('agent-toggle-bot-456')
+      expect(toggle).toBeInTheDocument()
+      expect(screen.getByText('Active')).toBeInTheDocument()
+    })
+
+    it('should show toggle for bot editor without agent block (switch off)', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+        />
+      )
+
+      const toggle = screen.getByTestId('agent-toggle-bot-456')
+      expect(toggle).toBeInTheDocument()
+      // Should show Disabled since no agent block exists
+      expect(screen.getByText('Inactive')).toBeInTheDocument()
+    })
+
+    it('should NOT show toggle for human editor', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="markdown"
+          editor={mockHumanEditor}
+          grants={mockGrants}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={mockAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      expect(
+        screen.queryByTestId('agent-toggle-human-123')
+      ).not.toBeInTheDocument()
+    })
+
+    it('should call onToggleAgentStatus when toggle is clicked', async () => {
+      const user = userEvent.setup()
+      mockOnToggleAgentStatus.mockResolvedValue(undefined)
+
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={mockAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      const toggle = screen.getByTestId('agent-toggle-bot-456')
+      await user.click(toggle)
+
+      await waitFor(() => {
+        expect(mockOnToggleAgentStatus).toHaveBeenCalledWith(
+          'agent-block-789',
+          'enabled'
+        )
+      })
+    })
+
+    it('should show Disabled status for disabled agent', () => {
+      const disabledAgentBlock: Block = {
+        ...mockAgentBlock,
+        contents: {
+          name: 'CodeReviewer',
+          config_dir: '/home/user/repo/.claude',
+          editor_id: 'bot-456',
+          status: 'disabled',
+        },
+      }
+
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={disabledAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      expect(screen.getByText('Inactive')).toBeInTheDocument()
+    })
+
+    it('should call onCreateAgent when toggling on without agent block', async () => {
+      const user = userEvent.setup()
+      const mockOnCreateAgent = vi.fn().mockResolvedValue(undefined)
+
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          onCreateAgent={mockOnCreateAgent}
+        />
+      )
+
+      const toggle = screen.getByTestId('agent-toggle-bot-456')
+      await user.click(toggle)
+
+      await waitFor(() => {
+        expect(mockOnCreateAgent).toHaveBeenCalledWith('bot-456')
+      })
+    })
+
+    it('should show Agent label alongside the toggle', () => {
+      render(
+        <CollaboratorItem
+          blockId="block-1"
+          blockType="directory"
+          editor={mockBotEditor}
+          grants={[]}
+          isOwner={false}
+          isActive={false}
+          onGrantChange={mockOnGrantChange}
+          agentBlock={mockAgentBlock}
+          onToggleAgentStatus={mockOnToggleAgentStatus}
+        />
+      )
+
+      expect(screen.getByText('Agent Capabilities')).toBeInTheDocument()
     })
   })
 })

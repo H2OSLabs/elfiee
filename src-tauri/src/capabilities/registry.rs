@@ -45,6 +45,18 @@ impl CapabilityRegistry {
         self.handlers.get(cap_id).cloned()
     }
 
+    /// Get all registered capability IDs suitable for agent auto-grants.
+    ///
+    /// Returns all capability IDs except those in `exclude`. Typically used to
+    /// exclude owner-only capabilities like `core.grant` and `core.revoke`.
+    pub fn get_grantable_cap_ids(&self, exclude: &[&str]) -> Vec<String> {
+        self.handlers
+            .keys()
+            .filter(|id| !exclude.contains(&id.as_str()))
+            .cloned()
+            .collect()
+    }
+
     /// Register all built-in capabilities.
     fn register_builtins(&mut self) {
         use super::builtins::*;
@@ -65,6 +77,7 @@ impl CapabilityRegistry {
 
     /// Register all extension capabilities.
     fn register_extensions(&mut self) {
+        use crate::extensions::agent::*;
         use crate::extensions::code::*;
         use crate::extensions::directory::*;
         use crate::extensions::markdown::*;
@@ -98,6 +111,11 @@ impl CapabilityRegistry {
         self.register(Arc::new(TaskWriteCapability));
         self.register(Arc::new(TaskReadCapability));
         self.register(Arc::new(TaskCommitCapability));
+
+        // Agent extension
+        self.register(Arc::new(AgentCreateCapability));
+        self.register(Arc::new(AgentEnableCapability));
+        self.register(Arc::new(AgentDisableCapability));
     }
 }
 
@@ -163,6 +181,26 @@ mod tests {
         let cap = registry.get("core.link").unwrap();
         assert_eq!(cap.cap_id(), "core.link");
         assert_eq!(cap.target(), "core/*");
+    }
+
+    #[test]
+    fn test_get_grantable_cap_ids_excludes_specified() {
+        let registry = CapabilityRegistry::new();
+        let caps = registry.get_grantable_cap_ids(&["core.grant", "core.revoke"]);
+
+        // Should not contain excluded capabilities
+        assert!(!caps.contains(&"core.grant".to_string()));
+        assert!(!caps.contains(&"core.revoke".to_string()));
+
+        // Should contain other capabilities
+        assert!(caps.contains(&"core.create".to_string()));
+        assert!(caps.contains(&"core.read".to_string()));
+        assert!(caps.contains(&"markdown.write".to_string()));
+        assert!(caps.contains(&"core.delete".to_string()));
+
+        // Total should be all registered minus 2 excluded
+        let all_count = registry.get_grantable_cap_ids(&[]).len();
+        assert_eq!(caps.len(), all_count - 2);
     }
 
     #[test]

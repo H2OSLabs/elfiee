@@ -9,6 +9,7 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/lib/app-store'
 import { toast } from 'sonner'
+import { events } from '@/bindings'
 
 const DocumentEditor = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -123,6 +124,23 @@ const DocumentEditor = () => {
     }
   }, [projectId])
 
+  // Auto-refresh when backend state changes (e.g., MCP/Claude Code modifications)
+  useEffect(() => {
+    const unlisten = events.stateChangedEvent.listen((event) => {
+      const { file_id } = event.payload
+      if (file_id === projectId) {
+        const store = useAppStore.getState()
+        store.loadBlocks(file_id)
+        store.loadGrants(file_id)
+        store.loadEvents(file_id)
+      }
+    })
+
+    return () => {
+      unlisten.then((f) => f())
+    }
+  }, [projectId])
+
   // Show loading state
   if (isLoading) {
     return (
@@ -183,7 +201,7 @@ const DocumentEditor = () => {
       </div>
 
       {/* Column 2: File Panel - Fixed width, NEVER shrinks */}
-      <div className="hidden h-full min-w-[240px] shrink-0 overflow-hidden border-r border-gray-200 bg-[#F9FAFB] lg:flex">
+      <div className="hidden h-full min-w-[240px] max-w-[300px] shrink-0 overflow-hidden border-r border-gray-200 bg-[#F9FAFB] lg:flex">
         <FilePanel />
       </div>
 

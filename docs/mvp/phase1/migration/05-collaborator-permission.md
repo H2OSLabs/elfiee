@@ -486,15 +486,16 @@ export const AddCollaboratorDialog = ({ fileId, onClose }: AddCollaboratorDialog
 
 - [x] `TauriClient` 中的权限相关方法已封装（第475-578行）
 - [x] `AppStore` 中的权限相关方法已实现（第479-563行，第720行）
-- [ ] 创建 `CollaboratorList` 组件
-- [ ] 创建 `CollaboratorItem` 组件
+- [x] 创建 `CollaboratorList` 组件
+- [x] 创建 `CollaboratorItem` 组件
 - [ ] 创建 `PermissionPanel` 组件
-- [ ] 创建 `AddCollaboratorDialog` 组件
-- [ ] 实现权限切换功能
-- [ ] 实现添加协作者功能
-- [ ] 实现移除协作者功能
-- [ ] 添加错误处理
-- [ ] 编写组件测试
+- [x] 创建 `AddCollaboratorDialog` 组件
+- [x] 实现权限切换功能
+- [x] 实现添加协作者功能
+- [x] 实现移除协作者功能
+- [x] 添加错误处理
+- [x] 编写组件测试
+- [x] 实现 Agent 状态切换功能（Enable/Disable）
 
 ---
 
@@ -514,6 +515,51 @@ export const AddCollaboratorDialog = ({ fileId, onClose }: AddCollaboratorDialog
 3. **添加协作者测试**：
    - 添加新协作者
    - 验证协作者创建成功
+
+4. **Agent 状态切换测试**：
+   - 所有 Bot 编辑者均显示 Agent Switch 开关（无论是否已有 Agent Block）
+   - Human 编辑者不显示 Agent 开关
+   - 有关联 Agent Block 时，切换开关调用 `enableAgent` / `disableAgent`
+   - 无关联 Agent Block 时，切换开关调用 `createAgent`（自动创建）
+   - 正确显示 Active / Inactive 状态文字
+
+---
+
+## Agent Enable/Disable 功能
+
+### 概述
+
+在 `CollaboratorItem` 组件中，为所有 Bot 编辑者显示一个 "Agent Capabilities" Switch 开关，
+允许手动控制 Agent 的启用/禁用状态。无论是否已有关联的 Agent Block，开关均显示。
+
+### 数据流
+
+1. `CollaboratorList` 从 store 订阅 agent blocks（`block_type === 'agent'`）
+2. 对每个 Bot 编辑者，通过 `editor.name` 和 `agentBlock.contents.target_project_id` 匹配关联的 Agent Block
+3. 将匹配到的 `agentBlock`（或 `undefined`）作为 prop 传递给 `CollaboratorItem`
+4. `CollaboratorItem` 对所有 Bot 编辑者（`editor_type === 'Bot'`）渲染 `Switch` 组件
+5. **有 Agent Block 时**：切换开关调用 `AppStore.enableAgent()` 或 `AppStore.disableAgent()`
+6. **无 Agent Block 时**：切换开关调用 `AppStore.createAgent()` 自动创建 Agent（默认 enabled）
+
+### 多 Agent 支持
+
+同一项目可以有多个 Agent Block，每个对应不同的 bot editor。唯一性约束为 `(target_project_id, editor_id)` 对。
+
+### Agent 身份归因
+
+`AgentContents` 包含 `editor_id` 字段，MCP Server 通过 `resolve_agent_editor_id()` 解析已启用 Agent 的 bot editor 身份，确保 MCP 操作归因到正确的 bot editor 而非 GUI owner。
+
+### 使用的 API
+
+- `AppStore.createAgent(fileId, blockId, name, editorId)` — 创建 Agent（自动 enabled）
+- `AppStore.enableAgent(fileId, agentBlockId)` — 启用 Agent
+- `AppStore.disableAgent(fileId, agentBlockId)` — 禁用 Agent
+- Agent blocks 通过 `blocks.filter(b => b.block_type === 'agent')` 获取
+
+### 相关文件
+
+- `src/components/permission/CollaboratorList.tsx` — 解析 Agent Block 并传递给子组件
+- `src/components/permission/CollaboratorItem.tsx` — 渲染 Switch 开关和状态指示器（Sparkles 图标 + "Agent Capabilities" 标签）
 
 ---
 

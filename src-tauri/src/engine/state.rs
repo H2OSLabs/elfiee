@@ -42,6 +42,11 @@ pub struct StateProjector {
     /// Maintained for `implement` relations only (the sole relation type).
     /// Updated on core.link, core.unlink, and core.delete events.
     pub parents: HashMap<String, Vec<String>>,
+
+    /// System owner editor ID — always authorized for all operations.
+    /// Loaded from `~/.elf/config.json` at engine startup.
+    /// TODO: Replace with user group mechanism (human ↔ agent group, group owner = admin)
+    pub system_editor_id: Option<String>,
 }
 
 impl StateProjector {
@@ -53,6 +58,7 @@ impl StateProjector {
             grants: GrantsTable::new(),
             editor_counts: HashMap::new(),
             parents: HashMap::new(),
+            system_editor_id: None,
         }
     }
 
@@ -369,6 +375,59 @@ impl StateProjector {
                 }
             }
 
+            // Agent block creation (same format as core.create)
+            "agent.create" => {
+                if let Some(obj) = event.value.as_object() {
+                    let block = Block {
+                        block_id: event.entity.clone(),
+                        name: obj
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        block_type: obj
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        owner: obj
+                            .get("owner")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        contents: obj
+                            .get("contents")
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::json!({})),
+                        children: obj
+                            .get("children")
+                            .and_then(|v| serde_json::from_value(v.clone()).ok())
+                            .unwrap_or_default(),
+                        metadata: obj
+                            .get("metadata")
+                            .and_then(|v| BlockMetadata::from_json(v).ok())
+                            .unwrap_or_default(),
+                    };
+                    self.blocks.insert(block.block_id.clone(), block);
+                }
+            }
+
+            // Agent enable/disable: update contents and metadata
+            "agent.enable" | "agent.disable" => {
+                if let Some(block) = self.blocks.get_mut(&event.entity) {
+                    // Replace contents entirely (AgentContents is a flat struct)
+                    if let Some(contents) = event.value.get("contents") {
+                        block.contents = contents.clone();
+                    }
+                    // Update metadata if present
+                    if let Some(new_metadata) = event.value.get("metadata") {
+                        if let Ok(parsed) = BlockMetadata::from_json(new_metadata) {
+                            block.metadata = parsed;
+                        }
+                    }
+                }
+            }
+
             // Editor creation
             "editor.create" => {
                 if let Some(editor_obj) = event.value.as_object() {
@@ -445,16 +504,22 @@ impl StateProjector {
     /// 1. Block owner always has all permissions on their own block.
     /// 2. Otherwise, check the grants table for explicit authorization.
     pub fn is_authorized(&self, editor_id: &str, cap_id: &str, block_id: &str) -> bool {
-        // Special case: core.create and editor.create are usually handled at a higher level
-        // or have implicit permissions for any registered editor in this simple version.
-        // But for block-level capabilities:
+        // 0. System owner always authorized
+        // TODO: Replace with user group mechanism
+        if let Some(ref sys_id) = self.system_editor_id {
+            if editor_id == sys_id {
+                return true;
+            }
+        }
+
+        // 1. Block owner always authorized
         if let Some(block) = self.get_block(block_id) {
             if block.owner == editor_id {
                 return true;
             }
         }
 
-        // Check explicit grants
+        // 2. Check explicit grants
         self.grants.has_grant(editor_id, cap_id, block_id)
     }
 

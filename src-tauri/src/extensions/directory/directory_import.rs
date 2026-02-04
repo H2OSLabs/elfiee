@@ -1,3 +1,4 @@
+use super::fs_scanner::{scan_directory, ScanOptions};
 /// Capability: import
 ///
 /// Imports files from external directory into the Directory Block.
@@ -5,7 +6,7 @@ use super::DirectoryImportPayload;
 use crate::capabilities::core::{create_event, CapResult};
 use crate::models::{Block, Command, Event};
 use crate::utils::time::now_utc;
-use crate::utils::{infer_block_type, is_safe_path, scan_directory, ScanOptions};
+use crate::utils::{infer_block_type, is_safe_path};
 use capability_macros::capability;
 use serde_json::json;
 use std::fs;

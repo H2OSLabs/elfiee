@@ -6,47 +6,43 @@ use std::fs;
 use std::path::Path;
 use tauri::State;
 
+// ============================================================================
+// Business Function (shared by Tauri command and MCP server)
+// ============================================================================
+
 /// Materialize blocks to the external file system (Checkout).
 ///
-/// This command implements the bottom-layer I/O ability:
-/// 1. Calls the `directory.export` capability for authorization and auditing.
-/// 2. If authorized, performs the 'checkout' by writing block contents to the target path.
-#[tauri::command]
-#[specta::specta]
-pub async fn checkout_workspace(
-    state: State<'_, AppState>,
-    file_id: String,
-    block_id: String,
-    payload: DirectoryExportPayload,
+/// Business logic shared between Tauri command and MCP server.
+/// 1. Calls `directory.export` capability for authorization and auditing.
+/// 2. If authorized, writes block contents to the target path.
+pub async fn do_checkout_workspace(
+    app_state: &AppState,
+    file_id: &str,
+    editor_id: &str,
+    block_id: &str,
+    payload: &DirectoryExportPayload,
 ) -> Result<(), String> {
     // 1. Get engine handle
-    let handle = state
+    let handle = app_state
         .engine_manager
-        .get_engine(&file_id)
+        .get_engine(file_id)
         .ok_or_else(|| format!("File '{}' is not open", file_id))?;
 
-    // 2. Get current active editor
-    let editor_id = state
-        .get_active_editor(&file_id)
-        .ok_or_else(|| "No active editor set for this file".to_string())?;
-
-    // 3. Perform Authorization & Auditing via Engine
-    // We send a command to the engine. If the user doesn't have "directory.export"
-    // permission on block_id, this will return an error.
+    // 2. Perform Authorization & Auditing via Engine
     let cmd = Command::new(
-        editor_id.clone(),
+        editor_id.to_string(),
         "directory.export".to_string(),
-        block_id.clone(),
+        block_id.to_string(),
         json!(payload),
     );
 
     handle.process_command(cmd).await?;
 
-    // 4. Permission granted. Now perform actual I/O.
+    // 3. Permission granted. Now perform actual I/O.
 
     // Get the directory block to read its entries
     let dir_block = handle
-        .get_block(block_id.clone())
+        .get_block(block_id.to_string())
         .await
         .ok_or_else(|| format!("Directory block '{}' not found", block_id))?;
 
@@ -62,9 +58,12 @@ pub async fn checkout_workspace(
     fs::create_dir_all(target_root)
         .map_err(|e| format!("Failed to create target directory: {}", e))?;
 
-    let source_prefix = payload.source_path.unwrap_or_else(|| "".to_string());
+    let source_prefix = payload
+        .source_path
+        .clone()
+        .unwrap_or_else(|| "".to_string());
 
-    // 5. Iterate through entries and write files
+    // 4. Iterate through entries and write files
     for (virtual_path, entry_value) in entries {
         // Filter by source_path if specified
         if !virtual_path.starts_with(&source_prefix) {
@@ -96,20 +95,21 @@ pub async fn checkout_workspace(
             match handle.get_block(child_id.to_string()).await {
                 Some(child_block) => {
                     // --- Dynamic Permission Check ---
-                    // Determine which capability is required to "read" this block type
                     let read_cap = match child_block.block_type.as_str() {
                         "markdown" => Some("markdown.read"),
                         "code" => Some("code.read"),
-                        _ => None, // Unknown type, will fall back to owner check only
+                        _ => None,
                     };
 
-                    // Verify permission
                     let authorized = if let Some(cap) = read_cap {
                         handle
-                            .check_grant(editor_id.clone(), cap.to_string(), child_id.to_string())
+                            .check_grant(
+                                editor_id.to_string(),
+                                cap.to_string(),
+                                child_id.to_string(),
+                            )
                             .await
                     } else {
-                        // If no read capability is defined for this type, only the owner can export
                         child_block.owner == editor_id
                     };
 
@@ -155,6 +155,26 @@ pub async fn checkout_workspace(
 
     Ok(())
 }
+
+// ============================================================================
+// Tauri Command (thin wrapper)
+// ============================================================================
+
+/// Materialize blocks to the external file system (Checkout).
+#[tauri::command]
+#[specta::specta]
+pub async fn checkout_workspace(
+    state: State<'_, AppState>,
+    file_id: String,
+    block_id: String,
+    payload: DirectoryExportPayload,
+) -> Result<(), String> {
+    let editor_id = state
+        .get_active_editor(&file_id)
+        .ok_or_else(|| "No active editor set for this file".to_string())?;
+    do_checkout_workspace(&state, &file_id, &editor_id, &block_id, &payload).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

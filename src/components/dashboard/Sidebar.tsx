@@ -1,4 +1,4 @@
-import { FolderKanban, FileEdit, User, X } from 'lucide-react'
+import { FolderKanban, FileEdit, User, X, UserPlus, Globe } from 'lucide-react'
 import { NavLink } from '@/components/NavLink'
 import { useAppStore } from '@/lib/app-store'
 import {
@@ -10,9 +10,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
+import { GlobalCollaboratorDialog } from '@/components/permission/GlobalCollaboratorDialog'
 
 const navItems = [
   { icon: FolderKanban, path: '/', label: 'Projects' },
@@ -27,6 +29,7 @@ export const Sidebar = () => {
     setActiveEditor,
     deleteEditor,
     getSystemEditorId,
+    isGlobalCollaborator,
   } = useAppStore()
 
   const editors = currentFileId ? getEditors(currentFileId) : []
@@ -34,6 +37,7 @@ export const Sidebar = () => {
 
   // Get system editor ID from config (the local user/owner)
   const [systemEditorId, setSystemEditorId] = useState<string | null>(null)
+  const [showGlobalDialog, setShowGlobalDialog] = useState(false)
 
   useEffect(() => {
     const loadSystemEditorId = async () => {
@@ -121,6 +125,9 @@ export const Sidebar = () => {
                 const isSystemUser = editor.editor_id === systemEditorId
                 // Can delete if: current user is system owner, not deleting self, not deleting the system owner
                 const canDelete = isSystemOwner && !isActive && !isSystemUser
+                const isGlobal = currentFileId
+                  ? isGlobalCollaborator(currentFileId, editor.editor_id)
+                  : false
 
                 return (
                   <DropdownMenuItem
@@ -149,6 +156,15 @@ export const Sidebar = () => {
                       >
                         {editor.name}
                       </span>
+                      {isGlobal && (
+                        <Badge
+                          variant="secondary"
+                          className="h-4 shrink-0 px-1.5 text-[10px]"
+                        >
+                          <Globe className="mr-0.5 h-2.5 w-2.5" />
+                          Global
+                        </Badge>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1">
@@ -178,12 +194,27 @@ export const Sidebar = () => {
                   </DropdownMenuItem>
                 )
               })}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="flex items-center gap-2 text-sm"
+                onSelect={() => setShowGlobalDialog(true)}
+              >
+                <UserPlus className="h-4 w-4" />
+                Add Global Collaborator
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         ) : (
           <div className="h-12 w-12" /> // Placeholder to maintain spacing
         )}
       </div>
+      {currentFileId && (
+        <GlobalCollaboratorDialog
+          open={showGlobalDialog}
+          onOpenChange={setShowGlobalDialog}
+          fileId={currentFileId}
+        />
+      )}
     </aside>
   )
 }
