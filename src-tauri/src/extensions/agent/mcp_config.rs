@@ -144,6 +144,24 @@ pub fn resolve_template(template: &Value, elf_path: &str) -> Value {
     }
 }
 
+/// Read the existing port for a named server from a `.mcp.json` config file.
+///
+/// Parses the SSE URL (`http://127.0.0.1:{port}/sse`) to extract the port number.
+/// Returns `None` if the file doesn't exist, is invalid, or the server entry is missing.
+pub fn read_existing_port(config_path: &Path, server_name: &str) -> Option<u16> {
+    let content = fs::read_to_string(config_path).ok()?;
+    let root: Value = serde_json::from_str(&content).ok()?;
+    let url = root
+        .get("mcpServers")?
+        .get(server_name)?
+        .get("url")?
+        .as_str()?;
+    url.strip_prefix("http://127.0.0.1:")?
+        .strip_suffix("/sse")?
+        .parse::<u16>()
+        .ok()
+}
+
 /// Build the MCP server config for Elfiee with a specific port.
 ///
 /// The Elfiee MCP server runs as an embedded SSE server inside the GUI process.
@@ -441,5 +459,61 @@ mod tests {
             config["url"],
             format!("http://127.0.0.1:{}/sse", crate::mcp::MCP_PORT)
         );
+    }
+
+    // --- read_existing_port tests ---
+
+    #[test]
+    fn test_read_existing_port_success() {
+        let (_dir, path) = temp_config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"mcpServers": {"elfiee": {"type": "sse", "url": "http://127.0.0.1:47205/sse"}}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(read_existing_port(&path, "elfiee"), Some(47205));
+    }
+
+    #[test]
+    fn test_read_existing_port_file_not_found() {
+        let (_dir, path) = temp_config_path();
+        assert_eq!(read_existing_port(&path, "elfiee"), None);
+    }
+
+    #[test]
+    fn test_read_existing_port_server_not_present() {
+        let (_dir, path) = temp_config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"mcpServers": {"other": {"url": "http://127.0.0.1:9999/sse"}}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(read_existing_port(&path, "elfiee"), None);
+    }
+
+    #[test]
+    fn test_read_existing_port_invalid_json() {
+        let (_dir, path) = temp_config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "not json!").unwrap();
+
+        assert_eq!(read_existing_port(&path, "elfiee"), None);
+    }
+
+    #[test]
+    fn test_read_existing_port_malformed_url() {
+        let (_dir, path) = temp_config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"mcpServers": {"elfiee": {"url": "http://localhost:47205/api"}}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(read_existing_port(&path, "elfiee"), None);
     }
 }
