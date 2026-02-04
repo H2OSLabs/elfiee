@@ -145,6 +145,10 @@ async fn read_hook_content(
 /// 3. Verifies discovered path has .git
 /// 4. Copies downstream block snapshots to repo path
 /// 5. Executes git branch + add + commit flow
+///
+/// TODO(mcp-side-effects): Git operations (hook injection, file export,
+/// branch/add/commit) are not reachable via `elfiee_exec`. Needs a dedicated
+/// MCP tool (e.g., `elfiee_task_commit`) that calls this function directly.
 pub async fn do_commit_task(
     app_state: &AppState,
     file_id: &str,
