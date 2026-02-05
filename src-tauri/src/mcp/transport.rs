@@ -110,6 +110,15 @@ pub async fn start_mcp_server(app_state: Arc<AppState>, port: u16) -> Result<(),
 ///
 /// `reserved_ports` contains ports that other agents intend to bind during
 /// recovery. These are skipped even if not yet in `agent_servers`.
+///
+/// **Race condition note**: This function is not atomic — between returning a
+/// port and the caller binding it, another thread could allocate the same port.
+/// This is safe in practice because:
+/// 1. `recover_agent_servers` processes agents serially (single-threaded loop).
+/// 2. `do_agent_create`/`do_agent_enable` are rare concurrent operations.
+/// 3. The caller retries up to 5 times on bind failure (see `start_agent_mcp_server`).
+/// If high-concurrency agent creation becomes a requirement, consider using a
+/// `DashSet<u16>` for atomic port reservation before returning.
 fn allocate_agent_port(app_state: &AppState, reserved_ports: &HashSet<u16>) -> Result<u16, String> {
     let max_attempts = 99; // Total ports in range
     for _ in 0..max_attempts {
@@ -153,7 +162,9 @@ fn allocate_agent_port(app_state: &AppState, reserved_ports: &HashSet<u16>) -> R
 /// agent's editor deterministically.
 ///
 /// `preferred_port`: If set, try this port first (used for port persistence on recovery).
-/// `reserved_ports`: Ports reserved by other agents during recovery; skipped during allocation.
+/// `reserved_ports`: Ports reserved by other agents during recovery; skipped during
+/// allocation. For non-recovery calls (create/enable), pass an empty `HashSet` —
+/// there is no batch coordination needed for single-agent operations.
 ///
 /// Returns the allocated port on success.
 pub async fn start_agent_mcp_server(
@@ -382,6 +393,82 @@ async fn disable_single_agent(app_state: &AppState, agent_block_id: &str) {
         "MCP: Could not find agent block {} in any open file for auto-disable",
         agent_block_id
     );
+}
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_allocate_agent_port_basic() {
+        let state = AppState::new();
+        let reserved = HashSet::new();
+
+        let port = allocate_agent_port(&state, &reserved).unwrap();
+        assert!(port >= 47201 && port <= 47299);
+    }
+
+    #[test]
+    fn test_allocate_agent_port_skips_reserved() {
+        let state = AppState::new();
+        let mut reserved = HashSet::new();
+        reserved.insert(47201);
+        reserved.insert(47202);
+        reserved.insert(47203);
+
+        let port = allocate_agent_port(&state, &reserved).unwrap();
+        // Should skip 47201-47203 and allocate 47204 or higher
+        assert!(port >= 47204 && port <= 47299);
+        assert!(!reserved.contains(&port));
+    }
+
+    #[test]
+    fn test_allocate_agent_port_skips_in_use() {
+        let state = AppState::new();
+        let reserved = HashSet::new();
+
+        // Simulate an agent already using port 47201
+        state.agent_servers.insert(
+            "existing-agent".to_string(),
+            AgentServerHandle {
+                port: 47201,
+                agent_block_id: "existing-agent".to_string(),
+                cancel_token: CancellationToken::new(),
+                sse_count: Arc::new(AtomicUsize::new(0)),
+            },
+        );
+
+        let port = allocate_agent_port(&state, &reserved).unwrap();
+        assert_ne!(port, 47201);
+        assert!(port >= 47202 && port <= 47299);
+    }
+
+    #[test]
+    fn test_allocate_agent_port_skips_both_reserved_and_in_use() {
+        let state = AppState::new();
+        let mut reserved = HashSet::new();
+        reserved.insert(47202); // Reserved by another recovering agent
+
+        // Simulate an agent already using port 47201
+        state.agent_servers.insert(
+            "existing-agent".to_string(),
+            AgentServerHandle {
+                port: 47201,
+                agent_block_id: "existing-agent".to_string(),
+                cancel_token: CancellationToken::new(),
+                sse_count: Arc::new(AtomicUsize::new(0)),
+            },
+        );
+
+        let port = allocate_agent_port(&state, &reserved).unwrap();
+        assert_ne!(port, 47201); // In use
+        assert_ne!(port, 47202); // Reserved
+        assert!(port >= 47203 && port <= 47299);
+    }
 }
 
 /// Disable all enabled agent blocks across all open files.

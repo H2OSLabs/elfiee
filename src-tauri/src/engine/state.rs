@@ -51,6 +51,12 @@ pub struct StateProjector {
     /// Editors that were explicitly deleted via `editor.delete`.
     /// Used by `is_authorized` to reject deleted editors even if they
     /// are still listed as block owners.
+    ///
+    /// **Design: Append-only for security.** This set is never cleared during
+    /// the lifetime of a StateProjector. This prevents a re-created editor
+    /// (same ID) from inheriting permissions of a previously deleted editor
+    /// during event replay. The memory cost is negligible — each entry is a
+    /// ~36-byte UUID string, and editor deletion is a rare operation.
     pub deleted_editors: HashSet<String>,
 }
 

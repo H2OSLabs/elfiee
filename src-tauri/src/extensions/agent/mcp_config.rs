@@ -148,6 +148,10 @@ pub fn resolve_template(template: &Value, elf_path: &str) -> Value {
 ///
 /// Parses the SSE URL (`http://127.0.0.1:{port}/sse`) to extract the port number.
 /// Returns `None` if the file doesn't exist, is invalid, or the server entry is missing.
+///
+/// The URL format is hardcoded to match what `build_elfiee_server_config` writes.
+/// If external tools modify `.mcp.json` with a different URL format (e.g., `localhost`,
+/// `::1`), parsing fails gracefully and the agent gets a new port on recovery.
 pub fn read_existing_port(config_path: &Path, server_name: &str) -> Option<u16> {
     let content = fs::read_to_string(config_path).ok()?;
     let root: Value = serde_json::from_str(&content).ok()?;
@@ -156,10 +160,18 @@ pub fn read_existing_port(config_path: &Path, server_name: &str) -> Option<u16> 
         .get(server_name)?
         .get("url")?
         .as_str()?;
-    url.strip_prefix("http://127.0.0.1:")?
-        .strip_suffix("/sse")?
-        .parse::<u16>()
-        .ok()
+    let port = url
+        .strip_prefix("http://127.0.0.1:")
+        .and_then(|s| s.strip_suffix("/sse"))
+        .and_then(|s| s.parse::<u16>().ok());
+    if port.is_none() {
+        log::debug!(
+            "Could not parse port from URL '{}' in {} (expected http://127.0.0.1:PORT/sse)",
+            url,
+            config_path.display()
+        );
+    }
+    port
 }
 
 /// Build the MCP server config for Elfiee with a specific port.
@@ -511,6 +523,34 @@ mod tests {
         fs::write(
             &path,
             r#"{"mcpServers": {"elfiee": {"url": "http://localhost:47205/api"}}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(read_existing_port(&path, "elfiee"), None);
+    }
+
+    #[test]
+    fn test_read_existing_port_localhost_url_returns_none() {
+        // Verifies that URLs using "localhost" instead of "127.0.0.1" fail gracefully
+        let (_dir, path) = temp_config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"mcpServers": {"elfiee": {"url": "http://localhost:47205/sse"}}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(read_existing_port(&path, "elfiee"), None);
+    }
+
+    #[test]
+    fn test_read_existing_port_ipv6_url_returns_none() {
+        // Verifies that IPv6 URLs fail gracefully
+        let (_dir, path) = temp_config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"mcpServers": {"elfiee": {"url": "http://[::1]:47205/sse"}}}"#,
         )
         .unwrap();
 
