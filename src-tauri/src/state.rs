@@ -1,6 +1,7 @@
 use crate::elf::ElfArchive;
 use crate::engine::EngineManager;
 use crate::extensions::terminal::TerminalSession;
+use crate::sync::SessionSyncManager;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -72,6 +73,10 @@ pub struct AppState {
     /// Both Tauri commands and MCP server send file_id here after successful commands.
     /// The Tauri app subscribes and emits `state_changed` events to the frontend.
     pub state_changed_tx: broadcast::Sender<String>,
+
+    /// Session sync manager (initialized on-demand per file).
+    /// Manages Claude Code session JSONL → Markdown sync for all agents.
+    pub session_sync: Arc<tokio::sync::Mutex<Option<SessionSyncManager>>>,
 }
 
 impl AppState {
@@ -87,6 +92,7 @@ impl AppState {
             terminal_sessions: Arc::new(Mutex::new(HashMap::new())),
             terminal_output_buffers: Arc::new(DashMap::new()),
             state_changed_tx: broadcast::channel(256).0,
+            session_sync: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 

@@ -8,6 +8,7 @@ pub mod extensions;
 pub mod mcp;
 pub mod models;
 pub mod state;
+pub mod sync;
 pub mod utils;
 
 use state::AppState;

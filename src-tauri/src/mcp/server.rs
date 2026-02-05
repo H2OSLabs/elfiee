@@ -24,6 +24,20 @@ use serde_json::json;
 use std::future::Future;
 use std::sync::Arc;
 
+/// Truncate a UTF-8 string to a maximum byte length, ensuring the cut
+/// happens at a valid character boundary. Appends "..." if truncated.
+fn truncate_utf8_safe(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    // Find the largest valid char boundary at or before max_bytes
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &s[..end])
+}
+
 /// Elfiee MCP Server
 ///
 /// Provides MCP protocol access to Elfiee's capabilities.
@@ -469,22 +483,14 @@ impl ElfieeMcpServer {
         match block.block_type.as_str() {
             "markdown" => {
                 if let Some(md) = block.contents.get("markdown").and_then(|v| v.as_str()) {
-                    let preview = if md.len() > 200 {
-                        format!("{}...", &md[..200])
-                    } else {
-                        md.to_string()
-                    };
+                    let preview = truncate_utf8_safe(md, 200);
                     summary["content_preview"] = json!(preview);
                     summary["content_length"] = json!(md.len());
                 }
             }
             "code" => {
                 if let Some(code) = block.contents.get("text").and_then(|v| v.as_str()) {
-                    let preview = if code.len() > 200 {
-                        format!("{}...", &code[..200])
-                    } else {
-                        code.to_string()
-                    };
+                    let preview = truncate_utf8_safe(code, 200);
                     summary["content_preview"] = json!(preview);
                     summary["content_length"] = json!(code.len());
                 }
