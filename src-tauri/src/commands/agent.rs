@@ -568,7 +568,15 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(
 
         let contents: AgentContents = match serde_json::from_value(block.contents.clone()) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(e) => {
+                log::warn!(
+                    "Agent recovery: Skipping agent block '{}' ({}): invalid contents: {}",
+                    block.name,
+                    block.block_id,
+                    e
+                );
+                continue;
+            }
         };
 
         if contents.status != AgentStatus::Enabled {
@@ -594,13 +602,19 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(
         ));
     }
 
-    // Phase 2: Start servers with preferred ports, falling back to allocation
+    // Phase 2: Start servers with preferred ports, falling back to allocation.
+    // After each agent is processed, release its reservation: on success the port
+    // is tracked in `agent_servers`; on failure the reservation is stale.
     for (block_id, name, contents, preferred) in &agent_preferred {
         let mcp_state = Arc::new(app_state.clone());
         match crate::mcp::start_agent_mcp_server(mcp_state, block_id, *preferred, &reserved_ports)
             .await
         {
             Ok(port) => {
+                // Release reservation — port now tracked in agent_servers (or was reassigned)
+                if let Some(p) = preferred {
+                    reserved_ports.remove(p);
+                }
                 // Only update .mcp.json if port changed (or no preferred port existed)
                 let port_changed = *preferred != Some(port);
                 if let Some(ref elf_dir) = elf_block_dir {
@@ -623,6 +637,10 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(
                 }
             }
             Err(e) => {
+                // Release reservation — preferred port failed, no longer needed
+                if let Some(p) = preferred {
+                    reserved_ports.remove(p);
+                }
                 eprintln!(
                     "Agent recovery: Failed to start MCP server for '{}': {}",
                     name, e
