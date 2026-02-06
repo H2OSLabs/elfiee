@@ -142,14 +142,26 @@ async fn sync_event_loop(
     while let Some(event) = event_rx.recv().await {
         // Note: Debouncing is handled by notify-debouncer-mini in the watcher (100ms).
 
-        // 1. Parse incrementally
+        // 1. Parse incrementally (offloaded to blocking thread pool to avoid
+        //    blocking the tokio runtime with synchronous file I/O)
         let doc = {
-            let mut parser = parser.lock().await;
-            match parser.parse_incremental(&event.path) {
-                Ok(Some(doc)) => doc,
-                Ok(None) => continue,
-                Err(e) => {
+            let parser_clone = parser.clone();
+            let path = event.path.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let mut parser = parser_clone.blocking_lock();
+                parser.parse_incremental(&path)
+            })
+            .await;
+
+            match result {
+                Ok(Ok(Some(doc))) => doc,
+                Ok(Ok(None)) => continue,
+                Ok(Err(e)) => {
                     log::error!("Parse error for {:?}: {}", event.path, e);
+                    continue;
+                }
+                Err(e) => {
+                    log::error!("Parse task panicked for {:?}: {}", event.path, e);
                     continue;
                 }
             }
