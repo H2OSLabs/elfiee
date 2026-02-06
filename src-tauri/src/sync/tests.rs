@@ -195,9 +195,7 @@ fn test_encode_nested_project_path() {
 #[test]
 #[cfg(not(windows))]
 fn test_encode_nested_project_path_unix() {
-    let encoded = encode_project_path(Path::new(
-        "/home/yaosh/projects/elfiee-project/elfiee",
-    ));
+    let encoded = encode_project_path(Path::new("/home/yaosh/projects/elfiee-project/elfiee"));
     assert_eq!(encoded, "-home-yaosh-projects-elfiee-project-elfiee");
 }
 
@@ -216,9 +214,7 @@ fn test_extract_project_name_from_complex_path() {
 #[cfg(not(windows))]
 fn test_extract_project_name_from_complex_path_unix() {
     assert_eq!(
-        extract_project_name_from_config(
-            "/home/yaosh/projects/frontend-component-library/.cursor"
-        ),
+        extract_project_name_from_config("/home/yaosh/projects/frontend-component-library/.cursor"),
         "frontend-component-library"
     );
 }

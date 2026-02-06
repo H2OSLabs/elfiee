@@ -45,6 +45,10 @@ pub fn run() {
                 }
             });
 
+            // Start AgentSyncObserver (manages session sync lifecycle autonomously)
+            let sync_observer_state = (*app_state).clone();
+            crate::sync::observer::AgentSyncObserver::spawn(sync_observer_state);
+
             // Start MCP Server (independent port, background task)
             let mcp_state = Arc::new((*app_state).clone());
 

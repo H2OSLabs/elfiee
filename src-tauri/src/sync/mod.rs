@@ -18,6 +18,7 @@
 //! - `stop_sync()`  — called when an Agent is disabled
 //! - `shutdown()`   — called when a file is closed
 
+pub mod observer;
 pub mod parser;
 pub mod session_path;
 pub mod watcher;

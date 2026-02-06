@@ -357,48 +357,16 @@ pub async fn do_agent_create(
         )
     };
 
-    // 9. Start session sync for this agent
-    {
-        let mut sync_guard = app_state.session_sync.lock().await;
-        if sync_guard.is_none() {
-            match crate::sync::SessionSyncManager::new(app_state.clone()) {
-                Ok(mgr) => {
-                    log::info!("SessionSyncManager created successfully");
-                    *sync_guard = Some(mgr);
-                }
-                Err(e) => {
-                    log::warn!("Failed to create SessionSyncManager: {}", e);
-                }
-            }
-        }
-        if let Some(ref sync_mgr) = *sync_guard {
-            // Restore offsets before starting sync to avoid re-processing
-            if let Some(elf_id) = all_blocks
-                .iter()
-                .find(|(_, b)| b.name == ".elf" && b.block_type == "directory")
-                .map(|(id, _)| id.clone())
-            {
-                log::debug!("Restoring offsets for .elf block: {}", elf_id);
-                if let Err(e) = sync_mgr.restore_offsets(&handle, &elf_id).await {
-                    log::warn!("Failed to restore sync offsets: {}", e);
-                }
-            }
-            log::debug!(
-                "Starting session sync: file_id={}, agent_block_id={}, config_dir={}",
-                file_id,
-                agent_block_id,
-                payload.config_dir
-            );
-            if let Err(e) = sync_mgr
-                .start_sync(file_id, &agent_block_id, &payload.config_dir)
-                .await
-            {
-                log::warn!("Failed to start session sync: {}", e);
-            } else {
-                log::info!("Session sync started for agent {}", agent_block_id);
-            }
-        }
-    }
+    // 9. Notify sync observer of new enabled agent
+    let _ =
+        app_state
+            .agent_sync_tx
+            .send(crate::sync::observer::AgentSyncEvent::AgentStateChanged {
+                file_id: file_id.to_string(),
+                agent_block_id: agent_block_id.clone(),
+                new_status: AgentStatus::Enabled,
+                config_dir: payload.config_dir.clone(),
+            });
 
     Ok(AgentCreateResult {
         agent_block_id,
@@ -478,34 +446,16 @@ pub async fn do_agent_enable(
         )
     };
 
-    // Start session sync for this agent
-    {
-        let mut sync_guard = app_state.session_sync.lock().await;
-        if sync_guard.is_none() {
-            match crate::sync::SessionSyncManager::new(app_state.clone()) {
-                Ok(mgr) => *sync_guard = Some(mgr),
-                Err(e) => log::warn!("Failed to create SessionSyncManager: {}", e),
-            }
-        }
-        if let Some(ref sync_mgr) = *sync_guard {
-            // Restore offsets before starting sync to avoid re-processing
-            if let Some(elf_id) = all_blocks
-                .iter()
-                .find(|(_, b)| b.name == ".elf" && b.block_type == "directory")
-                .map(|(id, _)| id.clone())
-            {
-                if let Err(e) = sync_mgr.restore_offsets(&handle, &elf_id).await {
-                    log::warn!("Failed to restore sync offsets: {}", e);
-                }
-            }
-            if let Err(e) = sync_mgr
-                .start_sync(file_id, agent_block_id, &contents.config_dir)
-                .await
-            {
-                log::warn!("Failed to start session sync: {}", e);
-            }
-        }
-    }
+    // Notify sync observer of agent enabled
+    let _ =
+        app_state
+            .agent_sync_tx
+            .send(crate::sync::observer::AgentSyncEvent::AgentStateChanged {
+                file_id: file_id.to_string(),
+                agent_block_id: agent_block_id.to_string(),
+                new_status: AgentStatus::Enabled,
+                config_dir: contents.config_dir.clone(),
+            });
 
     Ok(AgentEnableResult {
         agent_block_id: agent_block_id.to_string(),
@@ -563,15 +513,16 @@ pub async fn do_agent_disable(
         .await
         .unwrap_or_else(|e| eprintln!("Warning: Failed to stop agent MCP server: {}", e));
 
-    // Stop session sync for this agent
-    {
-        let sync_guard = app_state.session_sync.lock().await;
-        if let Some(ref sync_mgr) = *sync_guard {
-            if let Err(e) = sync_mgr.stop_sync(agent_block_id).await {
-                log::warn!("Failed to stop session sync: {}", e);
-            }
-        }
-    }
+    // Notify sync observer of agent disabled
+    let _ =
+        app_state
+            .agent_sync_tx
+            .send(crate::sync::observer::AgentSyncEvent::AgentStateChanged {
+                file_id: file_id.to_string(),
+                agent_block_id: agent_block_id.to_string(),
+                new_status: AgentStatus::Disabled,
+                config_dir: contents.config_dir.clone(),
+            });
 
     // Perform I/O: clean up symlink and MCP config
     let warnings = perform_disable_io(&contents.config_dir);
@@ -598,14 +549,15 @@ pub async fn do_agent_disable(
 // Recovery: Restore MCP servers for enabled agents
 // ============================================================================
 
-/// Recover per-agent MCP servers and session sync for all enabled agents in a file.
+/// Recover per-agent MCP servers for all enabled agents in a file.
 ///
 /// Called when a file is opened. For each agent block with status=Enabled:
 /// 1. Allocate a new port (ports don't persist across restarts)
 /// 2. Start per-agent MCP server
 /// 3. Update .mcp.json with the new port
 /// 4. Refresh symlink (idempotent)
-/// 5. Start session sync (JSONL → Markdown)
+///
+/// Session sync is handled separately by the AgentSyncObserver via FileOpened event.
 ///
 /// Returns a list of (agent_name, error_message) for agents that failed to recover.
 /// Successful recoveries are logged to stdout.
@@ -619,29 +571,6 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(
 
     let blocks = handle.get_all_blocks().await;
     let elf_block_dir = get_elf_block_dir(&blocks);
-
-    // Initialize SessionSyncManager and restore offsets before starting any agent sync.
-    // This MUST happen before start_sync() to prevent re-processing already-synced content.
-    {
-        let mut sync_guard = app_state.session_sync.lock().await;
-        if sync_guard.is_none() {
-            match crate::sync::SessionSyncManager::new(app_state.clone()) {
-                Ok(mgr) => *sync_guard = Some(mgr),
-                Err(e) => log::warn!("Failed to create SessionSyncManager: {}", e),
-            }
-        }
-        if let Some(ref sync_mgr) = *sync_guard {
-            if let Some(elf_id) = blocks
-                .iter()
-                .find(|(_, b)| b.name == ".elf" && b.block_type == "directory")
-                .map(|(id, _)| id.clone())
-            {
-                if let Err(e) = sync_mgr.restore_offsets(&handle, &elf_id).await {
-                    log::warn!("Failed to restore sync offsets: {}", e);
-                }
-            }
-        }
-    }
 
     for block in blocks.values() {
         if block.block_type != "agent" {
@@ -675,23 +604,6 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(
                     }
                 }
                 println!("Agent recovery: Restored '{}' on port {}", block.name, port);
-
-                // Start session sync for this agent (manager + offsets already restored above)
-                {
-                    let sync_guard = app_state.session_sync.lock().await;
-                    if let Some(ref sync_mgr) = *sync_guard {
-                        if let Err(e) = sync_mgr
-                            .start_sync(file_id, &block.block_id, &contents.config_dir)
-                            .await
-                        {
-                            log::warn!(
-                                "Agent recovery: Failed to start session sync for '{}': {}",
-                                block.name,
-                                e
-                            );
-                        }
-                    }
-                }
             }
             Err(e) => {
                 eprintln!(
@@ -706,10 +618,11 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(
     failures
 }
 
-/// Stop all per-agent MCP servers and session sync for agents in a specific file.
+/// Stop all per-agent MCP servers for agents in a specific file.
 ///
 /// Called when a file is closed. Finds all agent servers belonging to
-/// this file and shuts them down, then shuts down the session sync manager.
+/// this file and shuts them down.
+/// Session sync shutdown is handled by the AgentSyncObserver via FileClosing event.
 pub async fn shutdown_agent_servers(app_state: &AppState, file_id: &str) {
     let handle = match app_state.engine_manager.get_engine(file_id) {
         Some(h) => h,
@@ -727,15 +640,6 @@ pub async fn shutdown_agent_servers(app_state: &AppState, file_id: &str) {
                 block.name, e
             );
         }
-    }
-
-    // Shut down session sync manager
-    {
-        let mut sync_guard = app_state.session_sync.lock().await;
-        if let Some(ref mut sync_mgr) = *sync_guard {
-            sync_mgr.shutdown().await;
-        }
-        *sync_guard = None;
     }
 }
 
