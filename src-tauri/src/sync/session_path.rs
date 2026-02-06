@@ -195,6 +195,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn test_extract_project_name_from_config_unix() {
         assert_eq!(
             extract_project_name_from_config("/home/yaosh/projects/elfiee/.claude"),
@@ -212,5 +213,17 @@ mod tests {
         assert!(path_str.contains(".claude"));
         assert!(path_str.contains("projects"));
         assert!(path_str.contains("D--workspace-zhidaoyuan-elfiee"));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_config_dir_to_session_dir_unix() {
+        let result = compute_session_dir_from_config("/home/yaosh/projects/elfiee/.claude");
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        let path_str = path.to_string_lossy().to_string();
+        assert!(path_str.contains(".claude"));
+        assert!(path_str.contains("projects"));
+        assert!(path_str.contains("-home-yaosh-projects-elfiee"));
     }
 }
