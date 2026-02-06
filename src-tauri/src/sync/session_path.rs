@@ -186,6 +186,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_extract_project_name_from_config_windows() {
         assert_eq!(
             extract_project_name_from_config("D:\\workspace\\zhidaoyuan\\elfiee\\.claude"),
@@ -202,6 +203,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn test_config_dir_to_session_dir() {
         let result = compute_session_dir_from_config("D:\\workspace\\zhidaoyuan\\elfiee\\.claude");
         assert!(result.is_ok());

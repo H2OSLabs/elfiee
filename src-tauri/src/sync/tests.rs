@@ -184,6 +184,7 @@ fn test_encode_temp_path() {
 }
 
 #[test]
+#[cfg(windows)]
 fn test_encode_nested_project_path() {
     let encoded = encode_project_path(Path::new(
         "D:\\workspace\\zhidaoyuan\\elfiee-peoject\\elfiee",
@@ -192,6 +193,7 @@ fn test_encode_nested_project_path() {
 }
 
 #[test]
+#[cfg(windows)]
 fn test_extract_project_name_from_complex_path() {
     assert_eq!(
         extract_project_name_from_config(
