@@ -93,6 +93,8 @@ pub struct SessionWatcher {
     watching_parent: Arc<StdMutex<bool>>,
     /// Per-agent sync status
     status_map: HashMap<String, SyncStatus>,
+    /// Handle to the bridge thread for cleanup on drop
+    bridge_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl SessionWatcher {
@@ -127,7 +129,7 @@ impl SessionWatcher {
         let watched_dirs_bridge = watched_dirs.clone();
         let pending_agents_bridge = pending_agents.clone();
 
-        std::thread::Builder::new()
+        let bridge_thread = std::thread::Builder::new()
             .name("session-sync-bridge".into())
             .spawn(move || {
                 while let Ok(events) = notify_rx.recv() {
@@ -146,11 +148,15 @@ impl SessionWatcher {
 
                             pending.retain(|agent| {
                                 // Check if the created directory matches expected session dir
-                                // Also check case-insensitive match for Windows
-                                let matches = path == &agent.expected_session_dir
-                                    || path.to_string_lossy().eq_ignore_ascii_case(
+                                // Windows: case-insensitive (filesystem is case-insensitive)
+                                // Unix: exact match (filesystem is case-sensitive)
+                                let matches = if cfg!(windows) {
+                                    path.to_string_lossy().eq_ignore_ascii_case(
                                         &agent.expected_session_dir.to_string_lossy(),
-                                    );
+                                    )
+                                } else {
+                                    path == &agent.expected_session_dir
+                                };
 
                                 if matches {
                                     log::info!(
@@ -242,6 +248,7 @@ impl SessionWatcher {
                 pending_agents,
                 watching_parent,
                 status_map: HashMap::new(),
+                bridge_thread: Some(bridge_thread),
             },
             event_rx,
         ))
@@ -489,5 +496,21 @@ impl SessionWatcher {
         }
 
         result
+    }
+}
+
+impl Drop for SessionWatcher {
+    fn drop(&mut self) {
+        // The bridge thread will exit naturally when `watcher` is dropped,
+        // because the Debouncer will drop its callback which drops notify_tx,
+        // causing notify_rx.recv() to return Err and exit the loop.
+        //
+        // We join here to ensure the thread has fully terminated before
+        // the SessionWatcher is considered dropped.
+        if let Some(handle) = self.bridge_thread.take() {
+            // Give the thread a moment to exit after watcher is dropped
+            // (watcher is dropped before bridge_thread due to field order)
+            let _ = handle.join();
+        }
     }
 }
