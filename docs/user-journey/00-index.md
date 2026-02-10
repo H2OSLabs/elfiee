@@ -1,240 +1,157 @@
-# Elfiee User Journey Index
 
-> 本文档是 **Elfiee 的 User Journey 索引（Index）**，  
-> 用于枚举在当前「完整产品架构」下，Elfiee 覆盖的所有核心用户旅程。  
->  
-> 本文件 **只定义有哪些 User Journey**，不展开具体步骤与细节，  
-> 作为后续 UX / 产品 / 技术文档的索引入口。
+
+> **格式约定：** 这是「User Journey 的索引」，仅包含 **模块分组 / 文件清单 / 用例前缀**，不包含任何具体 user journey 内容。
+
 
 ---
 
-## 0. 元原则（适用于所有 Journey）
+  
 
-- 所有 Journey 都围绕 **AgentChannel → Agent → AgentContext** 展开  
-- Elfiee 是 **工作面 / 决策记忆层 / 编排器**，而非执行者  
-- 每个 Journey 都至少涉及以下之一：
-  - Context 选择 / 构建
-  - Agent 触发 / 路由
-  - Artifact（文件 / 代码 /配置）
-  - Evidence（Logs / Usage / Session）
-- Journey 之间 **可组合、可嵌套、可中断、可回放**
+## 1   目录
 
----
+  
 
-## 1. 项目与工作面生命周期 Journeys
+### 1.1   项目与容器（Project & .elf Container）
 
-### J1. 创建 / 打开 Elfiee Project
-- 新建 `.elf` 项目
-- 打开已有 `.elf` 项目
-- Project Context 初始化
+  
 
-### J2. 多 Project 并行切换
-- 在多个 `.elf` 项目之间切换
-- 不同 Project 对应不同 AgentContext
+| 文件                                                 | 模块                            | 用例前缀    |
+| -------------------------------------------------- | ----------------------------- | ------- |
+| [01-project-lifecycle](01-project-lifecycle.md)    | 创建 / 打开 / 重命名 / 完成任务/ 归档      | UJ-PROJ |
+| [02-container-format.md](02-container-format.md)   | `.elf` 、EventStore、资产目录 | UJ-ELF  |
+| [03-dashboard-library.md](03-dashboard-library.md) | 项目库（Dashboard）管理              | UJ-DASH |
 
-### J3. Project 导入 / 导出
-- 导入外部目录或已有工程
-- 导出 Project 资产用于分享或归档
+  
 
----
+### 1.2   Block 与编辑器（Blocks & Editor）
 
-## 2. Context 构建与管理 Journeys
+  
 
-### J4. Machine Context 绑定
-- 选择 / 绑定 PC / Mac / ECS
-- 本地 / 远端 Machine 切换
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [04-block-fundamentals.md](04-block-fundamentals.md) | Block 创建 / 类型 / 元数据 / 快照 | UJ-BLOCK |
+| [05-markdown-myst.md](05-markdown-myst.md) | MyST Markdown 编辑与渲染 | UJ-MD |
+| [06-code-blocks.md](06-code-blocks.md) | 代码块编辑、语法高亮、执行桥接（含 mocked→Terminal） | UJ-CODE |
+| [07-assets-attachments.md](07-assets-attachments.md) | 资源文件（图片/附件）导入与引用 | UJ-ASSET |
 
-### J5. Credential 与 Auth 管理
-- Claude / OpenAI 等 Credential 接入
-- OneAuth / OneSystem 对接
+  
 
-### J6. FileSystem Context 管理
-- configs / code / files 组织
-- 本地文件与 AgentContext 同步
+### 1.3   目录与索引
 
-### J7. Context Sync 与恢复
-- 手动 / 自动 Sync
-- Context 断点恢复
+  
 
----
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [08-vfs-basics.md](08-vfs-basics.md) | Directory 视图：路径→BlockID（硬链接语义） | UJ-VFS |
+| [09-vfs-ops.md](09-vfs-ops.md) | 新建/重命名/移动/删除（dentry 语义） | UJ-VFSOP |
+| [10-import-export.md](10-import-export.md) | 外部 repo 导入 / 导出 / 同步边界 | UJ-IO |
+| [11-garbage-collection.md](11-garbage-collection.md) | 不可达块、根集合、清理策略（可选） | UJ-GC |
 
-## 3. Agent 生命周期 Journeys
+  
 
-### J8. Agent 注册（Register）
-- 将 Agent 注册到 AgentChannel
-- MCP + Bot 能力声明
+### 1.4   D. 事件、时间线与回溯（Event Sourcing / Timeline）
 
-### J9. Agent 启用 / 禁用
-- 启用 Agent 参与当前 Project
-- 暂停或移除 Agent
+  
 
-### J10. 多 Agent 并存与隔离
-- 多 Agent 同时存在
-- Context / 能力边界隔离
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [12-event-log.md](12-event-log.md) | 事件记录、不可变审计轨迹、归因（who did what） | UJ-EVENT |
+| [13-timeline-ui.md](13-timeline-ui.md) | Timeline 浏览、过滤、跳转 | UJ-TL |
+| [14-time-travel.md](14-time-travel.md) | `get_state_at_event`、历史快照、restore 语义 | UJ-TT |
+| [15-ordering-clocks.md](15-ordering-clocks.md) | Vector Clock 与 Wall Clock（RFC3339）对齐 | UJ-CLOCK |
 
----
+  
 
-## 4. Agent 调用与执行 Journeys
+### 1.5   E. 协作者与权限（Editor Identities & CBAC）
 
-### J11. 手动触发 Agent 执行
-- 用户主动调用 Agent
-- 指定目标与上下文
+  
 
-### J12. 路由触发（Router-driven）
-- 由 AgentRouter 决定目标 Agent
-- 多 Agent 协同路径
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [16-editors-human-bot.md](16-editors-human-bot.md) | Human/Bot editor、Active Editor 切换 | UJ-EDITOR |
+| [17-cbac-grants.md](17-cbac-grants.md) | Capability Grant（triplet：Editor×Capability×Block） | UJ-CBAC |
+| [18-authz-enforcement.md](18-authz-enforcement.md) | 后端 certificator 授权校验、前端不可信边界 | UJ-AUTHZ |
 
-### J13. Slash / Endpoint 触发
-- Slash Command
-- Endpoint / MessageType 驱动执行
+  
 
----
+### 1.6   F. Agent 接入与路由（Agent / MCP / Routing）
 
-## 5. Task 与决策执行 Journeys
+  
 
-### J14. Task 创建与拆解
-- 定义 Task / 子 Task
-- Task 与上下文绑定
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [19-agent-block.md](19-agent-block.md) | Agent Block：创建 / 启用 / 禁用 / 绑定项目 | UJ-AGENT |
+| [20-mcp-server.md](20-mcp-server.md) | `elfiee mcp-server --elf {path}`、tools/list、tools/call | UJ-MCP |
+| [21-skills-templates.md](21-skills-templates.md) | `.elf/Agents/elfiee-client/`、SKILL.md / mcp.json 模板与占位符 | UJ-SKILL |
+| [22-routing-layer-baths.md](22-routing-layer-baths.md) | Baths（Synopath）：Agent Register / Agent Router（不含冲突处理） | UJ-ROUTE |
 
-### J15. Task → Agent 执行
-- Task 作为输入驱动 Agent
-- 生成中间与最终产出
+  
 
-### J16. Task 迭代与再执行
-- 修改上下文后重跑
-- 对比多次执行结果
+### 1.7   G. 会话同步（Session Sync）
 
----
+  
 
-## 6. Session 与执行过程 Journeys
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [23-session-discovery.md](23-session-discovery.md) | 识别 `~/.claude/projects/{path-hash}`、多项目定位 | UJ-SESS |
+| [24-session-ingestion.md](24-session-ingestion.md) | JSONL 增量解析、偏移量、落盘到 `.elf/Agents/session/` | UJ-INGEST |
+| [25-session-linking.md](25-session-linking.md) | 会话↔Task/Block 的关联策略（基础版） | UJ-SESSLINK |
 
-### J17. Bash / Shell Session 生成
-- Agent 启动执行 Session
-- Session 生命周期管理
+  
 
-### J18. Session 过程记录
-- 命令 / 输出记录
-- Session 与 Task / Agent 关联
+### 1.8   H. 任务闭环与 Git 映射（Task / Commit / Evidence）
 
-### J19. Session 回放与调试
-- 历史 Session 回看
-- 用于 Debug / 复盘
+  
 
----
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [26-task-block.md](26-task-block.md) | Task：创建/读写/状态机（Pending→InProgress→Committed→Archived） | UJ-TASK |
+| [27-relations-implement.md](27-relations-implement.md) | `implement` 关系、DAG 环检测、反向索引（谁定义了我） | UJ-REL |
+| [28-task-commit-git.md](28-task-commit-git.md) | `task.commit`：导出关联文件→git add/commit→回写证据 | UJ-GIT |
+| [29-task-archive.md](29-task-archive.md) | `task.archive`：生成归档 Markdown、记录 commit hash 与时间线 | UJ-ARCH |
 
-## 7. Artifact（产物）管理 Journeys
+  
 
-### J20. Code / File 生成与更新
-- Agent 写入代码或文件
-- 本地与 Context 同步
+### 1.9   I. 终端与验证（Terminal / Tests as Evidence）
 
-### J21. 配置生成与演进
-- configs 由 Agent 生成
-- 配置版本演进
+  
 
-### J22. 多版本 Artifact 对比
-- 不同执行结果对比
-- 人工决策介入
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [30-terminal-bridge.md](30-terminal-bridge.md) | 代码执行→终端输出回写（含 error_report 归因） | UJ-TERM |
+| [31-evidence-model.md](31-evidence-model.md) | 测试结果/日志作为证据：写入、关联、可追溯检索 | UJ-EVID |
 
----
+  
 
-## 8. Evidence 与 Traceability Journeys
+### 1.10   J. 从事件进化为 Skill（Learn Loop）
 
-### J23. Logs 收集
-- usage logs
-- system logs
+  
 
-### J24. Evidence 关联
-- Logs / Session / Artifact 关联到 Task
-- 形成完整 Trace
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [32-auto-skill-generator.md](32-auto-skill-generator.md) | 监听 `task.commit` → 生成 Skill 草稿 / 更新 SKILL.md | UJ-EVOLVE |
+| [33-pattern-matcher.md](33-pattern-matcher.md) | 新 Task 触发相似路径检索→注入参考上下文（可选） | UJ-MATCH |
+| [34-human-in-the-loop.md](34-human-in-the-loop.md) | Skill 草稿审核 / 发布 / 回滚（可选） | UJ-HITL |
 
-### J25. 执行可解释性回溯
-- 为什么得到这个结果
-- 哪个 Context / Agent / Session 导致
+  
 
----
+### 1.11   K. 横切关注点（Cross-Cutting）
 
-## 9. Skill 生成与复用 Journeys
+  
 
-### J26. 从执行中提炼 Skill
-- 从重复 Task / Session 中抽象 Skill
+| 文件 | 模块 | 用例前缀 |
+|------|------|----------|
+| [35-error-handling.md](35-error-handling.md) | 统一错误模型、Result<T,E>、用户可理解的提示 | UJ-ERR |
+| [36-performance-limits.md](36-performance-limits.md) | 大项目导入、事件回放性能、增量投影策略（可选） | UJ-PERF |
+| [37-backup-recovery.md](37-backup-recovery.md) | 备份、恢复、损坏容器处理（可选） | UJ-RECOV |
+| [38-security-credentials.md](38-security-credentials.md) | 凭据/本地配置/权限边界（只列索引，不给实现） | UJ-SEC |
 
-### J27. Skill 本地管理
-- Skill 版本化
-- Skill 作用域管理
-
-### J28. Skill 暴露给 AgentChannel
-- MCP + Skill 注册
-- 跨 Project 复用
+  
 
 ---
 
-## 10. 跨产品协作 Journeys（Elfiee × 其他产品）
+  
 
-### J29. Elfiee ↔ Chatroom（Ezagent）
-- 执行结果讨论
-- 决策共识形成
+## 2   版本说明
 
-### J30. Elfiee ↔ Synnovator
-- 结果发布
-- Proof-of-Work 展示
-
-### J31. 外部 3PID / IM 集成
-- 外部系统触发 Agent
-- 状态回传
-
----
-
-## 11. 回放、审计与学习 Journeys
-
-### J32. 决策历史回放
-- 时间轴浏览
-- Context 状态重建
-
-### J33. 决策审计
-- 人类 / Agent 行为审计
-- 合规与责任追踪
-
-### J34. 学习与反馈闭环
-- 从 Logs / Usage 中学习
-- 反哺 Skill 与 Agent 配置
-
----
-
-## 12. 异常与边界 Journeys
-
-### J35. 执行失败处理
-- Context 不完整
-- Credential 失效
-
-### J36. 冲突与中断恢复
-- 并发冲突
-- Session 中断
-
-### J37. 手动接管与降级
-- 人类接管执行
-- Agent 降级运行
-
----
-
-## 13. Journey 组合模式（索引）
-
-- **初始化型**：J1 → J4 → J5 → J8  
-- **执行型**：J14 → J11 → J17 → J20 → J23  
-- **迭代型**：J16 → J19 → J21  
-- **资产化型**：J26 → J27 → J28  
-- **发布型**：J15 → J30  
-- **学习型**：J24 → J34  
-
----
-
-## 14. 后续文档规划（占位）
-
-- 每个 Journey 对应一份：
-  - User Story
-  - 状态机
-  - 关键 UI / API
-  - 成功与失败路径
-- 本 Index 作为 **Elfiee User Journey 的唯一入口**
-
----
+  
