@@ -66,11 +66,11 @@
 
   
 
-| 文件 | 模块 | 用例前缀 |
-|------|------|----------|
-| [16-editors-human-bot.md](16-editors-human-bot.md) | Human/Bot editor、Active Editor 切换 | UJ-EDITOR |
-| [17-cbac-grants.md](17-cbac-grants.md) | Capability Grant（triplet：Editor×Capability×Block） | UJ-CBAC |
-| [18-authz-enforcement.md](18-authz-enforcement.md) | 后端 certificator 授权校验、前端不可信边界 | UJ-AUTHZ |
+| 文件                                                 | 模块                                                | 用例前缀      |
+| -------------------------------------------------- | ------------------------------------------------- | --------- |
+| [16-editors-human-bot.md](16-editors-human-bot.md) | Human/Bot editor、Active Editor 切换                 | UJ-EDITOR |
+| [17-cbac-grants.md](17-cbac-grants.md)             | Capability Grant（triplet：Editor×Capability×Block） | UJ-CBAC   |
+| [18-authz-enforcement.md](18-authz-enforcement.md) | 后端 certificator 授权校验、前端不可信边界                      | UJ-AUTHZ  |
 
   
 
@@ -103,12 +103,12 @@
 
   
 
-| 文件 | 模块 | 用例前缀 |
-|------|------|----------|
-| [26-task-block.md](26-task-block.md) | Task：创建/读写/状态机（Pending→InProgress→Committed→Archived） | UJ-TASK |
-| [27-relations-implement.md](27-relations-implement.md) | `implement` 关系、DAG 环检测、反向索引（谁定义了我） | UJ-REL |
-| [28-task-commit-git.md](28-task-commit-git.md) | `task.commit`：导出关联文件→git add/commit→回写证据 | UJ-GIT |
-| [29-task-archive.md](29-task-archive.md) | `task.archive`：生成归档 Markdown、记录 commit hash 与时间线 | UJ-ARCH |
+| 文件                                                     | 模块                                                    | 用例前缀    |
+| ------------------------------------------------------ | ----------------------------------------------------- | ------- |
+| [26-task-block.md](26-task-block.md)                   | Task：创建/读写/状态机（Pending→InProgress→Committed→Archived） | UJ-TASK |
+| [27-relations-implement.md](27-relations-implement.md) | `implement` 关系、DAG 环检测、反向索引（谁定义了我）                    | UJ-REL  |
+| [28-task-commit-git.md](28-task-commit-git.md)         | `task.commit`：导出关联文件→git add/commit→回写证据              | UJ-GIT  |
+| [29-task-archive.md](29-task-archive.md)               | `task.archive`：生成归档 Markdown、记录 commit hash 与时间线      | UJ-ARCH |
 
   
 
