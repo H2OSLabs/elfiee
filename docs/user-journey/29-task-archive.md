@@ -1,4 +1,4 @@
-# 29-task-archive.md
+
 
 > **格式约定：** 本文档描述 Task 在完成 Commit 后进入 Archive 阶段的完整 User Journey。
 > 仅描述 **用户视角 / 系统行为 / 状态变化 / 资产化意义**，不涉及 API 与实现细节。

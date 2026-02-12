@@ -4,30 +4,9 @@
     "type": "split",
     "children": [
       {
-        "id": "a138b491c9c7ac01",
-        "type": "tabs",
-        "dimension": 63.70967741935484,
-        "children": [
-          {
-            "id": "9f078cb12bad816c",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "docs/user-journey/00-index.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "00-index"
-            }
-          }
-        ]
-      },
-      {
         "id": "6a611dd1ba4dfe1a",
         "type": "tabs",
-        "dimension": 36.29032258064516,
+        "dimension": 56.451612903225815,
         "children": [
           {
             "id": "f93a3090e201cc64",
@@ -35,12 +14,35 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "docs/user-journey/01-project-lifecycle.md",
+                "file": "docs/user-journey/38-security-credentials.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "01-project-lifecycle"
+              "title": "38-security-credentials"
+            }
+          }
+        ]
+      },
+      {
+        "id": "a48fc462c5584c00",
+        "type": "tabs",
+        "dimension": 43.54838709677419,
+        "children": [
+          {
+            "id": "a5c3d2c6e4e8faf5",
+            "type": "leaf",
+            "pinned": true,
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "docs/user-journey/00-index.md",
+                "mode": "source",
+                "source": false
+              },
+              "pinned": true,
+              "icon": "lucide-file",
+              "title": "00-index"
             }
           }
         ]
@@ -116,7 +118,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "docs/user-journey/00-index.md",
+                "file": "docs/user-journey/38-security-credentials.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -126,7 +128,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "00-index 的反向链接列表"
+              "title": "38-security-credentials 的反向链接列表"
             }
           },
           {
@@ -135,12 +137,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "docs/user-journey/00-index.md",
+                "file": "docs/user-journey/38-security-credentials.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "00-index 的出链列表"
+              "title": "38-security-credentials 的出链列表"
             }
           },
           {
@@ -164,13 +166,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "docs/user-journey/00-index.md",
+                "file": "docs/user-journey/38-security-credentials.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "00-index 的大纲"
+              "title": "38-security-credentials 的大纲"
             }
           }
         ]
@@ -182,26 +184,42 @@
   },
   "left-ribbon": {
     "hiddenItems": {
-      "switcher:打开快速切换": false,
+      "switcher:打开快速切换": true,
       "graph:查看关系图谱": false,
       "canvas:新建白板": false,
-      "daily-notes:打开/创建今天的日记": false,
-      "templates:插入模板": false,
-      "command-palette:打开命令面板": false
+      "daily-notes:打开/创建今天的日记": true,
+      "templates:插入模板": true,
+      "command-palette:打开命令面板": true
     }
   },
-  "active": "9f078cb12bad816c",
+  "active": "f93a3090e201cc64",
   "lastOpenFiles": [
-    "docs/user-journey/19-agent-block.md",
-    "docs/user-journey/00-index.md",
-    "docs/user-journey/26-task-block.md",
+    "docs/user-journey/37-backup-recovery.md",
+    "docs/user-journey/36-performance-limits.md",
+    "docs/user-journey/35-error-handling.md",
+    "docs/user-journey/34-human-in-the-loop.md",
+    "docs/user-journey/33-pattern-matcher.md",
+    "docs/user-journey/32-auto-skill-generator.md",
+    "docs/user-journey/31-evidence-model.md",
+    "docs/user-journey/30-terminal-bridge.md",
     "docs/user-journey/29-task-archive.md",
-    "docs/README.md",
-    "docs/user-journey/01-project-lifecycle.md",
-    "docs/user-journey/23-session-discovery.md",
     "docs/user-journey/28-task-commit-git.md",
+    "docs/user-journey/27-relations-implement.md",
+    "docs/user-journey/26-task-block.md",
     "docs/user-journey/25-session-linking.md",
     "docs/user-journey/24-session-ingestion.md",
+    "docs/user-journey/23-session-discovery.md",
+    "docs/user-journey/22-routing-layer-baths.md",
+    "docs/user-journey/21-skills-templates.md",
+    "docs/user-journey/20-mcp-server.md",
+    "docs/user-journey/01-project-lifecycle.md",
+    "docs/user-journey/19-agent-block.md",
+    "docs/user-journey/18-authz-enforcement.md",
+    "docs/user-journey/17-cbac-grants.md",
+    "docs/user-journey/16-editors-human-bot.md",
+    "docs/user-journey/15-ordering-clocks.md",
+    "docs/user-journey/14-time-travel.md",
+    "docs/user-journey/13-timeline-ui.md",
     "docs/user-journey/PMD/飞书官方-认知偏差知识手册.pdf",
     "docs/user-journey/PMD/设计走查/设计走查表-完整版.numbers",
     "docs/user-journey/PMD/设计走查/设计走查表-交互UI分离版.numbers",

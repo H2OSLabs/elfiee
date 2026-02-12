@@ -15,11 +15,11 @@
 
   
 
-| 文件                                                 | 模块                            | 用例前缀    |
-| -------------------------------------------------- | ----------------------------- | ------- |
-| [01-project-lifecycle](01-project-lifecycle.md)    | 创建 / 打开 / 重命名 / 完成任务/ 归档      | UJ-PROJ |
-| [02-container-format.md](02-container-format.md)   | `.elf` 、EventStore、资产目录 | UJ-ELF  |
-| [03-dashboard-library.md](03-dashboard-library.md) | 项目库（Dashboard）管理              | UJ-DASH |
+| 文件                                                 | 模块                       | 用例前缀    |
+| -------------------------------------------------- | ------------------------ | ------- |
+| [01-project-lifecycle](01-project-lifecycle.md)    | 创建 / 打开 / 重命名 / 完成任务/ 归档 | UJ-PROJ |
+| [02-container-format.md](02-container-format.md)   | `.elf` 、EventStore、资产目录  | UJ-ELF  |
+| [03-dashboard-library.md](03-dashboard-library.md) | 项目库（Dashboard）管理         | UJ-DASH |
 
   
 
@@ -27,12 +27,12 @@
 
   
 
-| 文件 | 模块 | 用例前缀 |
-|------|------|----------|
-| [04-block-fundamentals.md](04-block-fundamentals.md) | Block 创建 / 类型 / 元数据 / 快照 | UJ-BLOCK |
-| [05-markdown-myst.md](05-markdown-myst.md) | MyST Markdown 编辑与渲染 | UJ-MD |
-| [06-code-blocks.md](06-code-blocks.md) | 代码块编辑、语法高亮、执行桥接（含 mocked→Terminal） | UJ-CODE |
-| [07-assets-attachments.md](07-assets-attachments.md) | 资源文件（图片/附件）导入与引用 | UJ-ASSET |
+| 文件                                                   | 模块                                 | 用例前缀     |
+| ---------------------------------------------------- | ---------------------------------- | -------- |
+| [04-block-fundamentals.md](04-block-fundamentals.md) | Block 创建 / 类型 / 元数据 / 快照           | UJ-BLOCK |
+| [05-markdown-myst.md](05-markdown-myst.md)           | MyST Markdown 编辑与渲染                | UJ-MD    |
+| [06-code-blocks.md](06-code-blocks.md)               | 代码块编辑、语法高亮、执行桥接（含 mocked→Terminal） | UJ-CODE  |
+| [07-assets-attachments.md](07-assets-attachments.md) | 资源文件（图片/附件）导入与引用                   | UJ-ASSET |
 
   
 
@@ -40,12 +40,12 @@
 
   
 
-| 文件 | 模块 | 用例前缀 |
-|------|------|----------|
-| [08-vfs-basics.md](08-vfs-basics.md) | Directory 视图：路径→BlockID（硬链接语义） | UJ-VFS |
-| [09-vfs-ops.md](09-vfs-ops.md) | 新建/重命名/移动/删除（dentry 语义） | UJ-VFSOP |
-| [10-import-export.md](10-import-export.md) | 外部 repo 导入 / 导出 / 同步边界 | UJ-IO |
-| [11-garbage-collection.md](11-garbage-collection.md) | 不可达块、根集合、清理策略（可选） | UJ-GC |
+| 文件                                                   | 模块                             | 用例前缀     |
+| ---------------------------------------------------- | ------------------------------ | -------- |
+| [08-vfs-basics.md](08-vfs-basics.md)                 | Directory 视图：路径→BlockID（硬链接语义） | UJ-VFS   |
+| [09-vfs-ops.md](09-vfs-ops.md)                       | 新建/重命名/移动/删除（dentry 语义）        | UJ-VFSOP |
+| [10-import-export.md](10-import-export.md)           | 外部 repo 导入 / 导出 / 同步边界         | UJ-IO    |
+| [11-garbage-collection.md](11-garbage-collection.md) | 不可达块、根集合、清理策略（可选）              | UJ-GC    |
 
   
 
