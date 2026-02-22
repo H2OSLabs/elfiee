@@ -1,7 +1,7 @@
 use crate::capabilities::grants::GrantsTable;
 use crate::models::{Block, BlockMetadata, Editor, EditorType, Event, RELATION_IMPLEMENT};
 use log;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Remove `parent_id` from the parent list of each target block.
 /// Cleans up empty parent entries from the reverse index.
@@ -47,6 +47,17 @@ pub struct StateProjector {
     /// Loaded from `~/.elf/config.json` at engine startup.
     /// TODO: Replace with user group mechanism (human ↔ agent group, group owner = admin)
     pub system_editor_id: Option<String>,
+
+    /// Editors that were explicitly deleted via `editor.delete`.
+    /// Used by `is_authorized` to reject deleted editors even if they
+    /// are still listed as block owners.
+    ///
+    /// **Design: Append-only for security.** This set is never cleared during
+    /// the lifetime of a StateProjector. This prevents a re-created editor
+    /// (same ID) from inheriting permissions of a previously deleted editor
+    /// during event replay. The memory cost is negligible — each entry is a
+    /// ~36-byte UUID string, and editor deletion is a rare operation.
+    pub deleted_editors: HashSet<String>,
 }
 
 impl StateProjector {
@@ -59,6 +70,7 @@ impl StateProjector {
             editor_counts: HashMap::new(),
             parents: HashMap::new(),
             system_editor_id: None,
+            deleted_editors: HashSet::new(),
         }
     }
 
@@ -465,6 +477,7 @@ impl StateProjector {
             // Editor deletion
             "editor.delete" => {
                 self.editors.remove(&event.entity);
+                self.deleted_editors.insert(event.entity.clone());
                 // Also remove all grants for this editor to prevent leaks in GrantsTable
                 self.grants.remove_all_grants_for_editor(&event.entity);
             }
@@ -504,7 +517,14 @@ impl StateProjector {
     /// 1. Block owner always has all permissions on their own block.
     /// 2. Otherwise, check the grants table for explicit authorization.
     pub fn is_authorized(&self, editor_id: &str, cap_id: &str, block_id: &str) -> bool {
-        // 0. System owner always authorized
+        // 0. Reject explicitly deleted editors.
+        // An editor that was registered via editor.create and then removed via
+        // editor.delete must not pass the owner check on blocks they previously owned.
+        if self.deleted_editors.contains(editor_id) {
+            return false;
+        }
+
+        // 1. System owner always authorized
         // TODO: Replace with user group mechanism
         if let Some(ref sys_id) = self.system_editor_id {
             if editor_id == sys_id {
@@ -512,14 +532,14 @@ impl StateProjector {
             }
         }
 
-        // 1. Block owner always authorized
+        // 2. Block owner always authorized
         if let Some(block) = self.get_block(block_id) {
             if block.owner == editor_id {
                 return true;
             }
         }
 
-        // 2. Check explicit grants
+        // 3. Check explicit grants
         self.grants.has_grant(editor_id, cap_id, block_id)
     }
 
@@ -1461,5 +1481,65 @@ mod tests {
 
         // Original entry unchanged
         assert_eq!(parents.get("child1").unwrap(), &vec!["parent1".to_string()]);
+    }
+
+    #[test]
+    fn test_deleted_editor_cannot_authorize_as_owner() {
+        let mut state = StateProjector::new();
+
+        // 1. Create editor
+        let editor_create = Event::new(
+            "alice".to_string(),
+            "system/editor.create".to_string(),
+            serde_json::json!({
+                "editor_id": "alice",
+                "name": "Alice",
+                "editor_type": "Human"
+            }),
+            {
+                let mut ts = StdHashMap::new();
+                ts.insert("system".to_string(), 1);
+                ts
+            },
+        );
+        state.apply_event(&editor_create);
+
+        // 2. Create block owned by alice
+        let block_create = Event::new(
+            "block1".to_string(),
+            "alice/core.create".to_string(),
+            serde_json::json!({
+                "name": "Test",
+                "type": "markdown",
+                "owner": "alice",
+                "contents": {},
+                "children": {}
+            }),
+            {
+                let mut ts = StdHashMap::new();
+                ts.insert("alice".to_string(), 1);
+                ts
+            },
+        );
+        state.apply_event(&block_create);
+
+        // 3. Alice can authorize as owner
+        assert!(state.is_authorized("alice", "markdown.write", "block1"));
+
+        // 4. Delete alice
+        let editor_delete = Event::new(
+            "alice".to_string(),
+            "system/editor.delete".to_string(),
+            serde_json::json!({ "deleted": true }),
+            {
+                let mut ts = StdHashMap::new();
+                ts.insert("system".to_string(), 2);
+                ts
+            },
+        );
+        state.apply_event(&editor_delete);
+
+        // 5. Deleted editor cannot authorize, even though still listed as block owner
+        assert!(!state.is_authorized("alice", "markdown.write", "block1"));
     }
 }

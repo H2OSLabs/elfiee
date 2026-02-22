@@ -5,7 +5,7 @@ description: "Guide for using Elfiee MCP tools to interact with .elf files. Use 
 
 # Elfiee MCP Tools
 
-Elfiee exposes MCP tools and resources for interacting with `.elf` files. Two connection modes:
+Elfiee exposes MCP tools and resources for interacting with `.elf` files. Three connection modes:
 
 | Mode | Transport | When to use |
 |------|-----------|-------------|
@@ -52,7 +52,7 @@ If any `elfiee_*` MCP tool returns a connection error, timeout, or "server unava
 
 ### The only exception:
 
-- `elfiee_directory_export` explicitly exports block content to the filesystem for external use (e.g., git commit). Files created by export ARE normal filesystem files and can be read/edited normally after export.
+- Files that have been **exported to the filesystem** (via `elfiee_task_commit` or `elfiee_directory_export`) ARE normal filesystem files. You can read/edit them with standard tools after export. But the **source of truth** remains in the .elf event store — re-export will overwrite external changes.
 
 ## Standalone Mode
 
@@ -135,6 +135,8 @@ Relation type: `implement` (the only allowed relation type). Semantic: `A → B`
 | `elfiee_directory_import` | Import from filesystem | `project`, `block_id`, `source_path`, `target_path?` |
 | `elfiee_directory_export` | Export to filesystem | `project`, `block_id`, `target_path`, `source_path?` |
 
+> **Prefer `elfiee_task_commit` over `elfiee_directory_export`** when exporting code to a git repo. `elfiee_task_commit` handles the full workflow: export linked blocks → create feature branch → git add/commit. Use `elfiee_directory_export` only for non-git scenarios (e.g., exporting assets to a local directory).
+
 ### Terminal Operations
 
 | Tool | Purpose | Key Params |
@@ -160,9 +162,11 @@ Relation type: `implement` (the only allowed relation type). Semantic: `A → B`
 | `elfiee_grant` | Grant capability | `project`, `block_id`, `editor_id`, `cap_id` |
 | `elfiee_revoke` | Revoke capability | `project`, `block_id`, `editor_id`, `cap_id` |
 
-Capability IDs: `core.create`, `core.read`, `core.link`, `core.unlink`, `core.delete`, `core.grant`, `core.revoke`, `core.update_metadata`, `core.rename`, `core.change_type`, `markdown.write`, `markdown.read`, `code.write`, `code.read`, `directory.create`, `directory.delete`, `directory.rename`, `directory.write`, `directory.import`, `directory.export`, `terminal.init`, `terminal.execute`, `terminal.save`, `terminal.close`, `task.write`, `task.read`, `task.commit`, `agent.create`, `agent.enable`, `agent.disable`.
+Capability IDs: `core.create`, `core.read`, `core.link`, `core.unlink`, `core.delete`, `core.update_metadata`, `core.rename`, `core.change_type`, `markdown.write`, `markdown.read`, `code.write`, `code.read`, `directory.create`, `directory.delete`, `directory.rename`, `directory.write`, `directory.import`, `directory.export`, `terminal.init`, `terminal.execute`, `terminal.save`, `terminal.close`, `task.write`, `task.read`, `task.commit`.
 
 > **Agent permission note**: Agents do NOT have `core.grant` / `core.revoke` capabilities. Permission management is reserved for human owners via the Elfiee GUI. Do not attempt to call `elfiee_grant` / `elfiee_revoke` — they will fail with authorization errors.
+>
+> **Agent capabilities** (`agent.create/enable/disable`) are GUI-only — no MCP tool exists yet.
 
 ### Editor Management
 
@@ -177,7 +181,17 @@ Capability IDs: `core.create`, `core.read`, `core.link`, `core.unlink`, `core.de
 |------|---------|------------|
 | `elfiee_exec` | Execute any capability | `project`, `capability`, `block_id?`, `payload?` |
 
-Use `elfiee_exec` for capabilities not covered by dedicated tools.
+`elfiee_exec` is a low-level passthrough that only runs the engine command (event generation + state update). It does **NOT** perform I/O side effects. Most capabilities already have dedicated MCP tools — prefer those.
+
+> **When to use `elfiee_exec`**: Only for capabilities that lack a dedicated MCP tool and have no I/O side effects. In practice this is rare — almost all capabilities have dedicated tools listed above.
+>
+> **Never use `elfiee_exec` for these** (events will be recorded but I/O will be missing, causing inconsistent state):
+>
+> | Capability | Missing I/O | Use instead |
+> |-----------|------------|-------------|
+> | `task.commit` | file export, git branch/add/commit | `elfiee_task_commit` |
+> | `terminal.*` | PTY session (process spawn, stdin/stdout) | `elfiee_terminal_*` |
+> | `agent.*` | MCP server, symlink, .mcp.json | GUI only (no MCP tool yet) |
 
 ## Workflow Examples
 

@@ -15,6 +15,7 @@ use super::ElfieeMcpServer;
 use crate::extensions::agent::{AgentContents, AgentStatus};
 use crate::state::{AgentServerHandle, AppState};
 use rmcp::transport::sse_server::{SseServer, SseServerConfig};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -106,7 +107,19 @@ pub async fn start_mcp_server(app_state: Arc<AppState>, port: u16) -> Result<(),
 ///
 /// Ports are allocated sequentially from 47201. Range: 47201–47299.
 /// Wraps around when the counter exceeds the range, reusing freed ports.
-fn allocate_agent_port(app_state: &AppState) -> Result<u16, String> {
+///
+/// `reserved_ports` contains ports that other agents intend to bind during
+/// recovery. These are skipped even if not yet in `agent_servers`.
+///
+/// **Race condition note**: This function is not atomic — between returning a
+/// port and the caller binding it, another thread could allocate the same port.
+/// This is safe in practice because:
+/// 1. `recover_agent_servers` processes agents serially (single-threaded loop).
+/// 2. `do_agent_create`/`do_agent_enable` are rare concurrent operations.
+/// 3. The caller retries up to 5 times on bind failure (see `start_agent_mcp_server`).
+/// If high-concurrency agent creation becomes a requirement, consider using a
+/// `DashSet<u16>` for atomic port reservation before returning.
+fn allocate_agent_port(app_state: &AppState, reserved_ports: &HashSet<u16>) -> Result<u16, String> {
     let max_attempts = 99; // Total ports in range
     for _ in 0..max_attempts {
         let port = app_state.next_agent_port.fetch_add(1, Ordering::SeqCst);
@@ -119,17 +132,19 @@ fn allocate_agent_port(app_state: &AppState) -> Result<u16, String> {
                 .agent_servers
                 .iter()
                 .any(|e| e.value().port == port)
+                && !reserved_ports.contains(&port)
             {
                 return Ok(port);
             }
             continue;
         }
 
-        // Skip ports already in use by another agent
+        // Skip ports already in use by another agent or reserved by recovery
         if !app_state
             .agent_servers
             .iter()
             .any(|e| e.value().port == port)
+            && !reserved_ports.contains(&port)
         {
             return Ok(port);
         }
@@ -146,10 +161,17 @@ fn allocate_agent_port(app_state: &AppState) -> Result<u16, String> {
 /// `ElfieeMcpServer` instance so `resolve_agent_editor_id` returns this
 /// agent's editor deterministically.
 ///
+/// `preferred_port`: If set, try this port first (used for port persistence on recovery).
+/// `reserved_ports`: Ports reserved by other agents during recovery; skipped during
+/// allocation. For non-recovery calls (create/enable), pass an empty `HashSet` —
+/// there is no batch coordination needed for single-agent operations.
+///
 /// Returns the allocated port on success.
 pub async fn start_agent_mcp_server(
     app_state: Arc<AppState>,
     agent_block_id: &str,
+    preferred_port: Option<u16>,
+    reserved_ports: &HashSet<u16>,
 ) -> Result<u16, String> {
     // Check if server already running for this agent
     if app_state.agent_servers.contains_key(agent_block_id) {
@@ -157,10 +179,33 @@ pub async fn start_agent_mcp_server(
         return Ok(existing.port);
     }
 
+    // Try preferred port first (port persistence)
+    if let Some(port) = preferred_port {
+        match try_start_agent_server(app_state.clone(), agent_block_id.to_string(), port).await {
+            Ok(handle) => {
+                let allocated_port = handle.port;
+                app_state
+                    .agent_servers
+                    .insert(agent_block_id.to_string(), handle);
+                println!(
+                    "MCP Agent {}: Server started on preferred port {}",
+                    agent_block_id, allocated_port
+                );
+                return Ok(allocated_port);
+            }
+            Err(e) => {
+                println!(
+                    "MCP Agent {}: Preferred port {} unavailable ({}), falling back to allocation",
+                    agent_block_id, port, e
+                );
+            }
+        }
+    }
+
     // Allocate port with retry on bind failure
     let mut last_err = String::new();
     for _ in 0..5 {
-        let port = allocate_agent_port(&app_state)?;
+        let port = allocate_agent_port(&app_state, reserved_ports)?;
 
         match try_start_agent_server(app_state.clone(), agent_block_id.to_string(), port).await {
             Ok(handle) => {
@@ -348,6 +393,82 @@ async fn disable_single_agent(app_state: &AppState, agent_block_id: &str) {
         "MCP: Could not find agent block {} in any open file for auto-disable",
         agent_block_id
     );
+}
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_allocate_agent_port_basic() {
+        let state = AppState::new();
+        let reserved = HashSet::new();
+
+        let port = allocate_agent_port(&state, &reserved).unwrap();
+        assert!(port >= 47201 && port <= 47299);
+    }
+
+    #[test]
+    fn test_allocate_agent_port_skips_reserved() {
+        let state = AppState::new();
+        let mut reserved = HashSet::new();
+        reserved.insert(47201);
+        reserved.insert(47202);
+        reserved.insert(47203);
+
+        let port = allocate_agent_port(&state, &reserved).unwrap();
+        // Should skip 47201-47203 and allocate 47204 or higher
+        assert!(port >= 47204 && port <= 47299);
+        assert!(!reserved.contains(&port));
+    }
+
+    #[test]
+    fn test_allocate_agent_port_skips_in_use() {
+        let state = AppState::new();
+        let reserved = HashSet::new();
+
+        // Simulate an agent already using port 47201
+        state.agent_servers.insert(
+            "existing-agent".to_string(),
+            AgentServerHandle {
+                port: 47201,
+                agent_block_id: "existing-agent".to_string(),
+                cancel_token: CancellationToken::new(),
+                sse_count: Arc::new(AtomicUsize::new(0)),
+            },
+        );
+
+        let port = allocate_agent_port(&state, &reserved).unwrap();
+        assert_ne!(port, 47201);
+        assert!(port >= 47202 && port <= 47299);
+    }
+
+    #[test]
+    fn test_allocate_agent_port_skips_both_reserved_and_in_use() {
+        let state = AppState::new();
+        let mut reserved = HashSet::new();
+        reserved.insert(47202); // Reserved by another recovering agent
+
+        // Simulate an agent already using port 47201
+        state.agent_servers.insert(
+            "existing-agent".to_string(),
+            AgentServerHandle {
+                port: 47201,
+                agent_block_id: "existing-agent".to_string(),
+                cancel_token: CancellationToken::new(),
+                sse_count: Arc::new(AtomicUsize::new(0)),
+            },
+        );
+
+        let port = allocate_agent_port(&state, &reserved).unwrap();
+        assert_ne!(port, 47201); // In use
+        assert_ne!(port, 47202); // Reserved
+        assert!(port >= 47203 && port <= 47299);
+    }
 }
 
 /// Disable all enabled agent blocks across all open files.

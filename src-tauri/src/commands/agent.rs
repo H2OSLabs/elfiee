@@ -221,6 +221,10 @@ pub(crate) fn perform_disable_io(config_dir: &str) -> Vec<String> {
 /// Business logic shared between Tauri command and MCP server.
 /// Validates config_dir, checks uniqueness, auto-creates bot editor,
 /// creates agent block, performs I/O.
+///
+/// TODO(mcp-side-effects): This function contains side effects (MCP server,
+/// symlink, .mcp.json) not reachable via `elfiee_exec`. Needs a dedicated
+/// MCP tool (e.g., `elfiee_agent_create`) that calls this function directly.
 pub async fn do_agent_create(
     app_state: &AppState,
     file_id: &str,
@@ -328,9 +332,11 @@ pub async fn do_agent_create(
 
     // 7. Start per-agent MCP server
     let mcp_state = Arc::new(app_state.clone());
-    let agent_port = crate::mcp::start_agent_mcp_server(mcp_state, &agent_block_id)
-        .await
-        .map_err(|e| format!("Agent created but MCP server failed: {}", e))?;
+    let no_reserved = std::collections::HashSet::new();
+    let agent_port =
+        crate::mcp::start_agent_mcp_server(mcp_state, &agent_block_id, None, &no_reserved)
+            .await
+            .map_err(|e| format!("Agent created but MCP server failed: {}", e))?;
 
     // 8. Perform enable I/O with per-agent port
     // Re-fetch blocks since state may have changed after create
@@ -369,6 +375,10 @@ pub async fn do_agent_create(
 ///
 /// Business logic shared between Tauri command and MCP server.
 /// Idempotent: can be called on an already-enabled agent to refresh configuration.
+///
+/// TODO(mcp-side-effects): This function contains side effects (MCP server,
+/// symlink, .mcp.json) not reachable via `elfiee_exec`. Needs a dedicated
+/// MCP tool (e.g., `elfiee_agent_enable`) that calls this function directly.
 pub async fn do_agent_enable(
     app_state: &AppState,
     file_id: &str,
@@ -408,9 +418,11 @@ pub async fn do_agent_enable(
 
     // Start per-agent MCP server
     let mcp_state = Arc::new(app_state.clone());
-    let agent_port = crate::mcp::start_agent_mcp_server(mcp_state, agent_block_id)
-        .await
-        .map_err(|e| format!("Agent enabled but MCP server failed: {}", e))?;
+    let no_reserved = std::collections::HashSet::new();
+    let agent_port =
+        crate::mcp::start_agent_mcp_server(mcp_state, agent_block_id, None, &no_reserved)
+            .await
+            .map_err(|e| format!("Agent enabled but MCP server failed: {}", e))?;
 
     // Perform I/O with per-agent port
     let all_blocks = handle.get_all_blocks().await;
@@ -449,6 +461,10 @@ pub async fn do_agent_enable(
 /// Business logic shared between Tauri command, MCP server, and
 /// auto-disconnect handler (transport.rs).
 /// Idempotent: can be called on an already-disabled agent.
+///
+/// TODO(mcp-side-effects): This function contains side effects (MCP server stop,
+/// symlink removal, .mcp.json cleanup) not reachable via `elfiee_exec`. Needs a
+/// dedicated MCP tool (e.g., `elfiee_agent_disable`) that calls this function directly.
 pub async fn do_agent_disable(
     app_state: &AppState,
     file_id: &str,
@@ -518,11 +534,15 @@ pub async fn do_agent_disable(
 
 /// Recover per-agent MCP servers for all enabled agents in a file.
 ///
-/// Called when a file is opened. For each agent block with status=Enabled:
-/// 1. Allocate a new port (ports don't persist across restarts)
-/// 2. Start per-agent MCP server
-/// 3. Update .mcp.json with the new port
-/// 4. Refresh symlink (idempotent)
+/// Called when a file is opened. Uses a two-phase approach to preserve ports:
+///
+/// **Phase 1 — Collect preferred ports**: Read `.mcp.json` for each enabled
+/// agent's last known port. Collect all preferred ports into a reserved set
+/// so that Phase 2 allocation never steals another agent's preferred port.
+///
+/// **Phase 2 — Start servers**: For each enabled agent, try its preferred
+/// port first. On failure, allocate a new port (skipping the reserved set).
+/// Only update `.mcp.json` if the port actually changed.
 ///
 /// Returns a list of (agent_name, error_message) for agents that failed to recover.
 /// Successful recoveries are logged to stdout.
@@ -537,6 +557,10 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(
     let blocks = handle.get_all_blocks().await;
     let elf_block_dir = get_elf_block_dir(&blocks);
 
+    // Phase 1: Collect preferred ports for all enabled agents
+    let mut agent_preferred: Vec<(String, String, AgentContents, Option<u16>)> = Vec::new();
+    let mut reserved_ports = std::collections::HashSet::new();
+
     for block in blocks.values() {
         if block.block_type != "agent" {
             continue;
@@ -544,38 +568,84 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(
 
         let contents: AgentContents = match serde_json::from_value(block.contents.clone()) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(e) => {
+                log::warn!(
+                    "Agent recovery: Skipping agent block '{}' ({}): invalid contents: {}",
+                    block.name,
+                    block.block_id,
+                    e
+                );
+                continue;
+            }
         };
 
         if contents.status != AgentStatus::Enabled {
             continue;
         }
 
-        // Start per-agent MCP server
+        // Read preferred port from .mcp.json (project-level)
+        let project_root = Path::new(&contents.config_dir)
+            .parent()
+            .unwrap_or(Path::new(&contents.config_dir));
+        let mcp_project_path = project_root.join(".mcp.json");
+        let preferred = mcp_config::read_existing_port(&mcp_project_path, MCP_SERVER_NAME);
+
+        if let Some(port) = preferred {
+            reserved_ports.insert(port);
+        }
+
+        agent_preferred.push((
+            block.block_id.clone(),
+            block.name.clone(),
+            contents,
+            preferred,
+        ));
+    }
+
+    // Phase 2: Start servers with preferred ports, falling back to allocation.
+    // After each agent is processed, release its reservation: on success the port
+    // is tracked in `agent_servers`; on failure the reservation is stale.
+    for (block_id, name, contents, preferred) in &agent_preferred {
         let mcp_state = Arc::new(app_state.clone());
-        match crate::mcp::start_agent_mcp_server(mcp_state, &block.block_id).await {
+        match crate::mcp::start_agent_mcp_server(mcp_state, block_id, *preferred, &reserved_ports)
+            .await
+        {
             Ok(port) => {
-                // Update .mcp.json with new port
+                // Release reservation — port now tracked in agent_servers (or was reassigned)
+                if let Some(p) = preferred {
+                    reserved_ports.remove(p);
+                }
+                // Only update .mcp.json if port changed (or no preferred port existed)
+                let port_changed = *preferred != Some(port);
                 if let Some(ref elf_dir) = elf_block_dir {
-                    let (_, warnings) = perform_enable_io(&contents.config_dir, elf_dir, port);
-                    if !warnings.is_empty() {
-                        let warning_msg = warnings.join("; ");
-                        eprintln!(
-                            "Agent recovery '{}': I/O warnings: {}",
-                            block.name, warning_msg
-                        );
-                        failures
-                            .push((block.name.clone(), format!("I/O warnings: {}", warning_msg)));
+                    if port_changed {
+                        let (_, warnings) = perform_enable_io(&contents.config_dir, elf_dir, port);
+                        if !warnings.is_empty() {
+                            let warning_msg = warnings.join("; ");
+                            eprintln!("Agent recovery '{}': I/O warnings: {}", name, warning_msg);
+                            failures.push((name.clone(), format!("I/O warnings: {}", warning_msg)));
+                        }
                     }
                 }
-                println!("Agent recovery: Restored '{}' on port {}", block.name, port);
+                if port_changed {
+                    println!(
+                        "Agent recovery: Restored '{}' on port {} (preferred: {:?})",
+                        name, port, preferred
+                    );
+                } else {
+                    println!("Agent recovery: Restored '{}' on same port {}", name, port);
+                }
             }
             Err(e) => {
+                // Release reservation — preferred port failed, no longer needed
+                if let Some(p) = preferred {
+                    reserved_ports.remove(p);
+                }
                 eprintln!(
                     "Agent recovery: Failed to start MCP server for '{}': {}",
-                    block.name, e
+                    name, e
                 );
-                failures.push((block.name.clone(), e));
+                failures.push((name.clone(), e));
             }
         }
     }

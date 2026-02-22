@@ -1582,6 +1582,15 @@ impl ElfieeMcpServer {
     // ========================================================================
 
     /// Execute any capability directly (advanced usage)
+    ///
+    /// TODO(mcp-side-effects): The following capabilities have side effects
+    /// in their Tauri command wrappers (src/commands/) that are NOT triggered
+    /// when called via elfiee_exec. They need dedicated MCP tools:
+    /// - agent.create: MCP server start, symlink, .mcp.json, grants
+    /// - agent.enable: MCP server start, symlink, .mcp.json
+    /// - agent.disable: MCP server stop, symlink removal, .mcp.json cleanup
+    /// - task.commit: git hook injection, file export, git branch/add/commit
+    /// See: do_agent_create(), do_agent_enable(), do_agent_disable(), do_task_commit()
     #[tool(
         description = "Execute any capability directly (advanced usage). Use this for capabilities not covered by specific tools."
     )]
