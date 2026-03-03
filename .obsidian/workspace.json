@@ -1,0 +1,236 @@
+{
+  "main": {
+    "id": "c784014af06356c3",
+    "type": "split",
+    "children": [
+      {
+        "id": "6a611dd1ba4dfe1a",
+        "type": "tabs",
+        "dimension": 56.451612903225815,
+        "children": [
+          {
+            "id": "f93a3090e201cc64",
+            "type": "leaf",
+            "state": {
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "新标签页"
+            }
+          }
+        ]
+      },
+      {
+        "id": "a48fc462c5584c00",
+        "type": "tabs",
+        "dimension": 43.54838709677419,
+        "children": [
+          {
+            "id": "a5c3d2c6e4e8faf5",
+            "type": "leaf",
+            "pinned": true,
+            "state": {
+              "type": "empty",
+              "state": {},
+              "pinned": true,
+              "icon": "lucide-file",
+              "title": "新标签页"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "779dced1495fceeb",
+    "type": "split",
+    "children": [
+      {
+        "id": "8becea0356a5e4f0",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "05b86724652ff926",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "文件列表"
+            }
+          },
+          {
+            "id": "a7e5428c0b06d994",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "tag:#待确认",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "搜索"
+            }
+          },
+          {
+            "id": "c5d9d9bd8d03753e",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "书签"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 230.5
+  },
+  "right": {
+    "id": "b78068310076c995",
+    "type": "split",
+    "children": [
+      {
+        "id": "fc2742ed52af2aaf",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "d4cf63725c98d440",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "docs/user-journey/38-security-credentials.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "38-security-credentials 的反向链接列表"
+            }
+          },
+          {
+            "id": "9741429c3b417187",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "docs/user-journey/38-security-credentials.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "38-security-credentials 的出链列表"
+            }
+          },
+          {
+            "id": "f99dda8af0567ef6",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "标签"
+            }
+          },
+          {
+            "id": "982d74908782cc57",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "docs/user-journey/38-security-credentials.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "38-security-credentials 的大纲"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:打开快速切换": true,
+      "graph:查看关系图谱": false,
+      "canvas:新建白板": false,
+      "daily-notes:打开/创建今天的日记": true,
+      "templates:插入模板": true,
+      "command-palette:打开命令面板": true
+    }
+  },
+  "active": "f93a3090e201cc64",
+  "lastOpenFiles": [
+    "docs/user-journey/inputs/System Architecture & Elfiee's Role.md",
+    "docs/user-journey/inputs/INDEX.md",
+    "docs/user-journey/inputs",
+    "docs/user-journey/38-security-credentials.md",
+    "docs/user-journey/37-backup-recovery.md",
+    "docs/user-journey/36-performance-limits.md",
+    "docs/user-journey/35-error-handling.md",
+    "docs/user-journey/34-human-in-the-loop.md",
+    "docs/user-journey/33-pattern-matcher.md",
+    "docs/user-journey/32-auto-skill-generator.md",
+    "docs/user-journey/31-evidence-model.md",
+    "docs/user-journey/30-terminal-bridge.md",
+    "docs/user-journey/21-skills-templates.md",
+    "docs/user-journey/29-task-archive.md",
+    "docs/user-journey/28-task-commit-git.md",
+    "docs/user-journey/27-relations-implement.md",
+    "docs/user-journey/26-task-block.md",
+    "docs/user-journey/25-session-linking.md",
+    "docs/user-journey/24-session-ingestion.md",
+    "docs/user-journey/23-session-discovery.md",
+    "docs/user-journey/22-routing-layer-baths.md",
+    "docs/user-journey/20-mcp-server.md",
+    "docs/user-journey/19-agent-block.md",
+    "docs/user-journey/18-authz-enforcement.md",
+    "docs/user-journey/17-cbac-grants.md",
+    "docs/user-journey/16-editors-human-bot.md",
+    "docs/user-journey/15-ordering-clocks.md",
+    "docs/user-journey",
+    "docs/mvp/phase2/user-journeys",
+    "docs/user-journey/PMD/飞书官方-认知偏差知识手册.pdf",
+    "docs/user-journey/PMD/设计走查/设计走查表-完整版.numbers",
+    "docs/user-journey/PMD/设计走查/设计走查表-交互UI分离版.numbers",
+    "docs/user-journey/PMD/设计走查",
+    "docs/user-journey/PMD/用户体验设计学习表/趣味性设计十原则.png",
+    "docs/user-journey/PMD/用户体验设计学习表/设计评估的18种方法续表.png",
+    "docs/user-journey/PMD/用户体验设计学习表/设计评估的18种方法.png",
+    "docs/user-journey/PMD/用户体验设计学习表/设计决策的20种方法2.png",
+    "docs/user-journey/PMD/用户体验设计学习表/设计决策的20种方法.png",
+    "docs/user-journey/PMD/用户体验设计学习表/用户研究的12种方法续表.png",
+    "docs/user-journey/PMD/用户体验设计学习表/用户研究的12种方法.png",
+    "docs/user-journey/PMD/用户体验设计学习表/用户分析的18种方法.png",
+    "docs/user-journey/PMD/用户体验设计学习表/深度体验层次十大设计思想.png",
+    "docs/user-journey/PMD/用户体验设计学习表/易用性组件.png",
+    "docs/user-journey/PMD/用户体验设计学习表",
+    "docs/user-journey/PMD/用户体验 UX 宝藏清单.pdf",
+    "docs/user-journey/PMD/作品集【UI_UX设计师_上海 10-15K】郭子印 5年-0226-1.pdf"
+  ]
+}
