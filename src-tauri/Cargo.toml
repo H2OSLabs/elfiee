@@ -46,6 +46,10 @@ log = "0.4"
 dirs = "5.0"
 axum = "0.8"
 
+# Session sync (file system watching)
+notify = "7"
+notify-debouncer-mini = "0.5"
+
 # MCP (Model Context Protocol)
 rmcp = { version = "0.5", features = ["server", "transport-sse-server"] }
 schemars = "1"

@@ -189,6 +189,13 @@ pub async fn open_file(path: String, state: State<'_, AppState>) -> Result<Strin
         );
     }
 
+    // Notify sync observer that file is opened (triggers session sync recovery)
+    let _ = state
+        .agent_sync_tx
+        .send(crate::sync::observer::AgentSyncEvent::FileOpened {
+            file_id: file_id.clone(),
+        });
+
     Ok(file_id)
 }
 
@@ -234,6 +241,13 @@ pub async fn save_file(file_id: String, state: State<'_, AppState>) -> Result<()
 #[tauri::command]
 #[specta]
 pub async fn close_file(file_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    // Notify sync observer to shut down sync for this file
+    let _ = state
+        .agent_sync_tx
+        .send(crate::sync::observer::AgentSyncEvent::FileClosing {
+            file_id: file_id.clone(),
+        });
+
     // Shutdown per-agent MCP servers before engine shutdown
     crate::commands::agent::shutdown_agent_servers(&state, &file_id).await;
 

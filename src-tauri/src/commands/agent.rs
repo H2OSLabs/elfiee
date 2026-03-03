@@ -357,6 +357,17 @@ pub async fn do_agent_create(
         )
     };
 
+    // 9. Notify sync observer of new enabled agent
+    let _ =
+        app_state
+            .agent_sync_tx
+            .send(crate::sync::observer::AgentSyncEvent::AgentStateChanged {
+                file_id: file_id.to_string(),
+                agent_block_id: agent_block_id.clone(),
+                new_status: AgentStatus::Enabled,
+                config_dir: payload.config_dir.clone(),
+            });
+
     Ok(AgentCreateResult {
         agent_block_id,
         status: AgentStatus::Enabled,
@@ -435,6 +446,17 @@ pub async fn do_agent_enable(
         )
     };
 
+    // Notify sync observer of agent enabled
+    let _ =
+        app_state
+            .agent_sync_tx
+            .send(crate::sync::observer::AgentSyncEvent::AgentStateChanged {
+                file_id: file_id.to_string(),
+                agent_block_id: agent_block_id.to_string(),
+                new_status: AgentStatus::Enabled,
+                config_dir: contents.config_dir.clone(),
+            });
+
     Ok(AgentEnableResult {
         agent_block_id: agent_block_id.to_string(),
         status: AgentStatus::Enabled,
@@ -491,6 +513,17 @@ pub async fn do_agent_disable(
         .await
         .unwrap_or_else(|e| eprintln!("Warning: Failed to stop agent MCP server: {}", e));
 
+    // Notify sync observer of agent disabled
+    let _ =
+        app_state
+            .agent_sync_tx
+            .send(crate::sync::observer::AgentSyncEvent::AgentStateChanged {
+                file_id: file_id.to_string(),
+                agent_block_id: agent_block_id.to_string(),
+                new_status: AgentStatus::Disabled,
+                config_dir: contents.config_dir.clone(),
+            });
+
     // Perform I/O: clean up symlink and MCP config
     let warnings = perform_disable_io(&contents.config_dir);
 
@@ -523,6 +556,8 @@ pub async fn do_agent_disable(
 /// 2. Start per-agent MCP server
 /// 3. Update .mcp.json with the new port
 /// 4. Refresh symlink (idempotent)
+///
+/// Session sync is handled separately by the AgentSyncObserver via FileOpened event.
 ///
 /// Returns a list of (agent_name, error_message) for agents that failed to recover.
 /// Successful recoveries are logged to stdout.
@@ -587,6 +622,7 @@ pub async fn recover_agent_servers(app_state: &AppState, file_id: &str) -> Vec<(
 ///
 /// Called when a file is closed. Finds all agent servers belonging to
 /// this file and shuts them down.
+/// Session sync shutdown is handled by the AgentSyncObserver via FileClosing event.
 pub async fn shutdown_agent_servers(app_state: &AppState, file_id: &str) {
     let handle = match app_state.engine_manager.get_engine(file_id) {
         Some(h) => h,
