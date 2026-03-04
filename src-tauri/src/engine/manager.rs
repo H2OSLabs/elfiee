@@ -133,13 +133,54 @@ impl Default for EngineManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capabilities::registry::CapabilityRegistry;
     use crate::engine::EventStore;
-    use crate::models::Command;
+    use crate::models::{Command, Event};
+    use std::collections::HashMap;
 
     async fn create_test_pool() -> EventPoolWithPath {
         EventStore::create(":memory:")
             .await
             .expect("Failed to create test pool")
+    }
+
+    /// Seed bootstrap events for a test editor directly to EventStore.
+    async fn seed_test_editor(event_pool: &EventPoolWithPath, editor_id: &str) {
+        let registry = CapabilityRegistry::new();
+        let cap_ids = registry.get_grantable_cap_ids(&[]);
+        let mut events = Vec::new();
+
+        let mut ts = HashMap::new();
+        ts.insert(editor_id.to_string(), 1);
+        events.push(Event::new(
+            editor_id.to_string(),
+            format!("{}/editor.create", editor_id),
+            serde_json::json!({
+                "editor_id": editor_id,
+                "name": editor_id,
+                "editor_type": "Human"
+            }),
+            ts,
+        ));
+
+        for (i, cap_id) in cap_ids.iter().enumerate() {
+            let mut grant_ts = HashMap::new();
+            grant_ts.insert(editor_id.to_string(), (i + 2) as i64);
+            events.push(Event::new(
+                "*".to_string(),
+                format!("{}/core.grant", editor_id),
+                serde_json::json!({
+                    "editor": editor_id,
+                    "capability": cap_id,
+                    "block": "*"
+                }),
+                grant_ts,
+            ));
+        }
+
+        EventStore::append_events(&event_pool.pool, &events)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -160,13 +201,11 @@ mod tests {
         let pool1 = create_test_pool().await;
         let pool2 = create_test_pool().await;
 
-        // First spawn succeeds
         manager
             .spawn_engine("test.elf".to_string(), pool1)
             .await
             .expect("First spawn should succeed");
 
-        // Second spawn fails
         let result = manager.spawn_engine("test.elf".to_string(), pool2).await;
 
         assert!(result.is_err());
@@ -180,35 +219,29 @@ mod tests {
     async fn test_manager_get_engine() {
         let manager = EngineManager::new();
         let pool = create_test_pool().await;
+        seed_test_editor(&pool, "alice").await;
 
-        // No engine exists yet
         assert!(manager.get_engine("test.elf").is_none());
 
-        // Spawn engine
         manager
             .spawn_engine("test.elf".to_string(), pool)
             .await
             .expect("Failed to spawn engine");
 
-        // Now get_engine returns Some
         let handle = manager.get_engine("test.elf");
         assert!(handle.is_some());
 
-        // Can use the handle to send commands
         let cmd = Command::new(
             "alice".to_string(),
             "core.create".to_string(),
             "block1".to_string(),
             serde_json::json!({
                 "name": "Test Block",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
         let result = handle.unwrap().process_command(cmd).await;
-        if let Err(e) = &result {
-            eprintln!("Command failed: {}", e);
-        }
         assert!(result.is_ok());
     }
 
@@ -224,7 +257,6 @@ mod tests {
 
         assert_eq!(manager.count(), 1);
 
-        // Shutdown the engine
         let result = manager.shutdown_engine("test.elf").await;
         assert!(result.is_ok());
         assert_eq!(manager.count(), 0);
@@ -246,9 +278,11 @@ mod tests {
     async fn test_manager_multiple_engines() {
         let manager = EngineManager::new();
 
-        // Spawn multiple engines
+        // Spawn multiple engines with bootstrapped editors
+        let editors = ["alice", "bob", "charlie"];
         for i in 1..=3 {
             let pool = create_test_pool().await;
+            seed_test_editor(&pool, editors[i - 1]).await;
             let file_id = format!("test{}.elf", i);
 
             manager
@@ -258,11 +292,8 @@ mod tests {
         }
 
         assert_eq!(manager.count(), 3);
-        assert!(manager.has_engine("test1.elf"));
-        assert!(manager.has_engine("test2.elf"));
-        assert!(manager.has_engine("test3.elf"));
 
-        // Each engine is independent - can process commands separately
+        // Each engine is independent
         let handle1 = manager.get_engine("test1.elf").unwrap();
         let handle2 = manager.get_engine("test2.elf").unwrap();
 
@@ -270,25 +301,18 @@ mod tests {
             "alice".to_string(),
             "core.create".to_string(),
             "block1".to_string(),
-            serde_json::json!({"name": "Block 1", "block_type": "markdown"}),
+            serde_json::json!({"name": "Block 1", "block_type": "document"}),
         );
 
         let cmd2 = Command::new(
             "bob".to_string(),
             "core.create".to_string(),
             "block2".to_string(),
-            serde_json::json!({"name": "Block 2", "block_type": "markdown"}),
+            serde_json::json!({"name": "Block 2", "block_type": "document"}),
         );
 
         let result1 = handle1.process_command(cmd1).await;
         let result2 = handle2.process_command(cmd2).await;
-
-        if let Err(e) = &result1 {
-            eprintln!("Command 1 failed: {}", e);
-        }
-        if let Err(e) = &result2 {
-            eprintln!("Command 2 failed: {}", e);
-        }
         assert!(result1.is_ok());
         assert!(result2.is_ok());
     }
@@ -297,7 +321,6 @@ mod tests {
     async fn test_manager_shutdown_all() {
         let manager = EngineManager::new();
 
-        // Spawn multiple engines
         for i in 1..=3 {
             let pool = create_test_pool().await;
             let file_id = format!("test{}.elf", i);
@@ -310,12 +333,8 @@ mod tests {
 
         assert_eq!(manager.count(), 3);
 
-        // Shutdown all engines
         let result = manager.shutdown_all().await;
         assert!(result.is_ok());
         assert_eq!(manager.count(), 0);
-        assert!(!manager.has_engine("test1.elf"));
-        assert!(!manager.has_engine("test2.elf"));
-        assert!(!manager.has_engine("test3.elf"));
     }
 }

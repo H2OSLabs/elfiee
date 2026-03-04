@@ -7,21 +7,30 @@ use specta::Type;
 /// Payload for core.create capability
 ///
 /// This payload is used to create a new block with a name and type.
+/// block_type 由 Extension 注册决定，核心类型包括 document, task, session。
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct CreateBlockPayload {
     /// The display name for the new block
     pub name: String,
-    /// The block type (e.g., "markdown", "code", "diagram")
+    /// The block type (registered via Extension, e.g. "document", "task", "session")
     pub block_type: String,
     /// The source category of the block ("outline" or "linked")
     #[serde(default = "default_source")]
     pub source: String,
-    /// Optional metadata (description, custom fields, etc.)
+    /// Optional initial contents for the block (type-specific JSON).
     ///
-    /// If provided, will be merged with auto-generated timestamps.
-    /// Example: { "description": "项目需求文档" }
+    /// Document: { "format": "rs", "content": "fn main() {}" }
+    /// Task: { "description": "实现登录", "status": "pending" }
+    /// Session: { "entries": [] }
     #[serde(default)]
-    pub metadata: Option<serde_json::Value>,
+    pub contents: Option<serde_json::Value>,
+    /// Document 类型的文件格式标识（创建 document block 时必填）。
+    /// 例如: "md", "rs", "py", "toml", "png", "pdf"
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Optional block description
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 fn default_source() -> String {
@@ -57,7 +66,7 @@ pub struct UnlinkBlockPayload {
 pub struct GrantPayload {
     /// The editor ID to grant the capability to
     pub target_editor: String,
-    /// The capability ID to grant (e.g., "markdown.write", "core.delete")
+    /// The capability ID to grant (e.g., "document.write", "core.delete")
     pub capability: String,
     /// The block ID to grant access to, or "*" for all blocks (wildcard)
     #[serde(default = "default_wildcard")]
@@ -78,15 +87,19 @@ pub struct RevokePayload {
     pub target_block: String,
 }
 
-/// Payload for core.update_metadata capability
+/// Payload for core.write capability
 ///
-/// This payload is used to update metadata fields of an existing block.
-/// The metadata will be merged with existing metadata (not replaced).
+/// Updates structural fields of a block (name, description).
+/// block_type is NOT modifiable — it is determined at init/scan time.
+/// At least one field must be provided.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct UpdateMetadataPayload {
-    /// Metadata fields to update or add
-    /// Example: { "description": "Updated description", "tags": ["tag1", "tag2"] }
-    pub metadata: serde_json::Value,
+pub struct WriteBlockPayload {
+    /// New name for the block (optional)
+    #[serde(default)]
+    pub name: Option<String>,
+    /// New description for the block (optional)
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Payload for editor.create capability
@@ -113,20 +126,6 @@ pub struct EditorDeletePayload {
     pub editor_id: String,
 }
 
-/// Payload for core.rename capability
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct RenamePayload {
-    /// The new name for the block
-    pub name: String,
-}
-
-/// Payload for core.change_type capability
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct ChangeTypePayload {
-    /// The new block type
-    pub block_type: String,
-}
-
 /// Default value for target_block field (wildcard)
 fn default_wildcard() -> String {
     "*".to_string()
@@ -140,41 +139,110 @@ mod tests {
     fn test_create_block_payload() {
         let json = serde_json::json!({
             "name": "My Block",
-            "block_type": "markdown",
-            "source": "linked"
+            "block_type": "document",
+            "source": "linked",
+            "format": "md"
         });
         let payload: CreateBlockPayload = serde_json::from_value(json).unwrap();
         assert_eq!(payload.name, "My Block");
-        assert_eq!(payload.block_type, "markdown");
+        assert_eq!(payload.block_type, "document");
         assert_eq!(payload.source, "linked");
-        assert!(payload.metadata.is_none());
+        assert_eq!(payload.format, Some("md".to_string()));
+        assert!(payload.description.is_none());
+        assert!(payload.contents.is_none());
     }
 
     #[test]
     fn test_create_block_payload_default_source() {
         let json = serde_json::json!({
             "name": "My Block",
-            "block_type": "markdown"
+            "block_type": "document",
+            "format": "md"
         });
         let payload: CreateBlockPayload = serde_json::from_value(json).unwrap();
         assert_eq!(payload.source, "outline");
     }
 
     #[test]
-    fn test_create_block_payload_with_metadata() {
+    fn test_create_block_payload_with_description() {
         let json = serde_json::json!({
             "name": "My Block",
-            "block_type": "markdown",
-            "metadata": {
-                "description": "测试描述"
-            }
+            "block_type": "document",
+            "format": "rs",
+            "description": "测试描述"
         });
         let payload: CreateBlockPayload = serde_json::from_value(json).unwrap();
         assert_eq!(payload.name, "My Block");
-        assert!(payload.metadata.is_some());
+        assert_eq!(payload.description, Some("测试描述".to_string()));
+    }
 
-        let metadata = payload.metadata.unwrap();
-        assert_eq!(metadata["description"], "测试描述");
+    #[test]
+    fn test_write_block_payload() {
+        let json = serde_json::json!({
+            "name": "New Name",
+            "description": "New Description"
+        });
+        let payload: WriteBlockPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(payload.name, Some("New Name".to_string()));
+        assert_eq!(payload.description, Some("New Description".to_string()));
+    }
+
+    #[test]
+    fn test_write_block_payload_partial() {
+        let json = serde_json::json!({
+            "name": "Only Name"
+        });
+        let payload: WriteBlockPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(payload.name, Some("Only Name".to_string()));
+        assert!(payload.description.is_none());
+    }
+
+    #[test]
+    fn test_create_block_payload_with_contents() {
+        let json = serde_json::json!({
+            "name": "auth.rs",
+            "block_type": "document",
+            "format": "rs",
+            "contents": {
+                "format": "rs",
+                "content": "fn main() {}"
+            }
+        });
+        let payload: CreateBlockPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(payload.format, Some("rs".to_string()));
+        assert!(payload.contents.is_some());
+        let contents = payload.contents.unwrap();
+        assert_eq!(contents["content"], "fn main() {}");
+    }
+
+    #[test]
+    fn test_create_block_payload_task_type() {
+        let json = serde_json::json!({
+            "name": "实现登录",
+            "block_type": "task",
+            "contents": {
+                "description": "为项目添加 OAuth2 登录",
+                "status": "pending"
+            }
+        });
+        let payload: CreateBlockPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(payload.block_type, "task");
+        assert!(payload.format.is_none());
+        assert!(payload.contents.is_some());
+    }
+
+    #[test]
+    fn test_create_block_payload_session_type() {
+        let json = serde_json::json!({
+            "name": "执行记录",
+            "block_type": "session",
+            "contents": {
+                "entries": []
+            }
+        });
+        let payload: CreateBlockPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(payload.block_type, "session");
+        assert!(payload.contents.is_some());
     }
 
     #[test]
@@ -207,11 +275,11 @@ mod tests {
     fn test_grant_payload_with_wildcard_default() {
         let json = serde_json::json!({
             "target_editor": "alice",
-            "capability": "markdown.write"
+            "capability": "document.write"
         });
         let payload: GrantPayload = serde_json::from_value(json).unwrap();
         assert_eq!(payload.target_editor, "alice");
-        assert_eq!(payload.capability, "markdown.write");
+        assert_eq!(payload.capability, "document.write");
         assert_eq!(payload.target_block, "*");
     }
 
@@ -230,12 +298,12 @@ mod tests {
     fn test_revoke_payload() {
         let json = serde_json::json!({
             "target_editor": "charlie",
-            "capability": "markdown.write",
+            "capability": "document.write",
             "target_block": "block-999"
         });
         let payload: RevokePayload = serde_json::from_value(json).unwrap();
         assert_eq!(payload.target_editor, "charlie");
-        assert_eq!(payload.capability, "markdown.write");
+        assert_eq!(payload.capability, "document.write");
         assert_eq!(payload.target_block, "block-999");
     }
 

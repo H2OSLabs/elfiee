@@ -1,3 +1,4 @@
+use crate::capabilities::grants::GrantsTable;
 use crate::models::{Block, Command, Event};
 use std::collections::HashMap;
 
@@ -9,35 +10,36 @@ pub type CapResult<T> = Result<T, String>;
 /// All capabilities must implement this trait. Use the `#[capability]` macro
 /// to avoid boilerplate code.
 pub trait CapabilityHandler: Send + Sync {
-    /// Unique capability ID (e.g., "core.link", "markdown.write")
+    /// Unique capability ID (e.g., "core.link", "document.write")
     fn cap_id(&self) -> &str;
 
-    /// Target block type pattern (e.g., "core/*", "markdown")
+    /// Target block type pattern (e.g., "core/*", "document")
     fn target(&self) -> &str;
 
     /// Check if an editor is authorized to execute this capability.
     ///
-    /// Default implementation:
-    /// - Block owner always has access
-    /// - Otherwise, check the grants HashMap
-    fn certificator(
-        &self,
-        editor_id: &str,
-        block: &Block,
-        grants: &HashMap<String, Vec<(String, String)>>, // editor_id -> [(cap_id, block_id)]
-    ) -> bool {
-        // Owner check: block owner has all capabilities
-        if block.owner == editor_id {
-            return true;
-        }
-
-        // Check grants
-        if let Some(editor_grants) = grants.get(editor_id) {
-            editor_grants
-                .iter()
-                .any(|(cap, blk)| cap == self.cap_id() && (blk == &block.block_id || blk == "*"))
-        } else {
-            false
+    /// This is the sole authorization entry point (pure event-sourcing).
+    /// Authorization is derived from two event-sourced layers:
+    /// 1. Owner check — block.owner from core.create events
+    /// 2. Grant check — from core.grant/core.revoke events via GrantsTable
+    ///
+    /// When block=None (create-type or wildcard operations), checks wildcard grant.
+    /// Every operation requires authorization — no exceptions.
+    fn certificator(&self, editor_id: &str, block: Option<&Block>, grants: &GrantsTable) -> bool {
+        match block {
+            Some(b) => {
+                // 1. Owner check: block owner has all capabilities
+                if b.owner == editor_id {
+                    return true;
+                }
+                // 2. Grant check (specific block or wildcard)
+                grants.has_grant(editor_id, self.cap_id(), &b.block_id)
+            }
+            None => {
+                // No target block (create, wildcard grant/revoke, editor ops)
+                // Must have wildcard grant for this capability
+                grants.has_grant(editor_id, self.cap_id(), "*")
+            }
         }
     }
 

@@ -2,8 +2,8 @@
 ///
 /// Generates an audit event recording a task commit intent.
 /// The actual I/O (file export + git operations) is performed by the
-/// Tauri command layer (`commands/task.rs`), following the Split Pattern
-/// used by `directory.export`.
+/// Tauri command layer (`commands/task.rs`), following the Split Pattern:
+/// Handler produces Event (pure), Command layer performs I/O.
 ///
 /// ## Validation
 /// - Block must be a task block
@@ -14,7 +14,7 @@
 ///
 /// ## Auto-discover
 /// No target_path parameter — the Tauri command layer auto-discovers
-/// linked repos from downstream blocks' `_block_dir` metadata.
+/// linked repos from downstream blocks.
 use crate::capabilities::core::{create_event, CapResult};
 use crate::models::{Block, Command, Event, RELATION_IMPLEMENT};
 use capability_macros::capability;

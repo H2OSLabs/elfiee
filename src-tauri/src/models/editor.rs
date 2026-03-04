@@ -1,23 +1,17 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Default)]
 pub enum EditorType {
+    #[default]
     Human,
     Bot,
-}
-
-impl Default for EditorType {
-    fn default() -> Self {
-        EditorType::Human
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct Editor {
     pub editor_id: String,
     pub name: String,
-    #[serde(default)]
     pub editor_type: EditorType,
 }
 
@@ -96,17 +90,15 @@ mod tests {
     }
 
     #[test]
-    fn test_editor_deserialization_without_type_defaults_to_human() {
-        // Test backward compatibility - old events without editor_type field
+    fn test_editor_deserialization_without_type_fails() {
+        // editor_type 是必填字段，缺少时应反序列化失败
         let json = r#"{
             "editor_id": "test-id",
             "name": "Alice"
         }"#;
 
-        let editor: Editor = serde_json::from_str(json).unwrap();
-        assert_eq!(editor.editor_id, "test-id");
-        assert_eq!(editor.name, "Alice");
-        assert_eq!(editor.editor_type, EditorType::Human); // Should default
+        let result: Result<Editor, _> = serde_json::from_str(json);
+        assert!(result.is_err());
     }
 
     #[test]

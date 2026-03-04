@@ -1,4 +1,4 @@
-use crate::models::Event;
+use crate::models::{Event, EventMode};
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
 use std::path::PathBuf;
@@ -72,7 +72,8 @@ impl EventStore {
                 attribute TEXT NOT NULL,
                 value TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                mode TEXT NOT NULL DEFAULT 'full'
             )",
         )
         .execute(pool)
@@ -100,8 +101,8 @@ impl EventStore {
                 .map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
 
             sqlx::query(
-                "INSERT INTO events (event_id, entity, attribute, value, timestamp, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6)",
+                "INSERT INTO events (event_id, entity, attribute, value, timestamp, created_at, mode)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(&event.event_id)
             .bind(&event.entity)
@@ -109,6 +110,7 @@ impl EventStore {
             .bind(&value_json)
             .bind(&timestamp_json)
             .bind(&event.created_at)
+            .bind(event.mode.as_str())
             .execute(pool)
             .await?;
         }
@@ -118,7 +120,7 @@ impl EventStore {
     /// Get all events from the database, ordered by insertion order (rowid).
     pub async fn get_all_events(pool: &SqlitePool) -> Result<Vec<Event>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT event_id, entity, attribute, value, timestamp, created_at
+            "SELECT event_id, entity, attribute, value, timestamp, created_at, mode
              FROM events
              ORDER BY rowid",
         )
@@ -140,7 +142,7 @@ impl EventStore {
         entity: &str,
     ) -> Result<Vec<Event>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT event_id, entity, attribute, value, timestamp, created_at
+            "SELECT event_id, entity, attribute, value, timestamp, created_at, mode
              FROM events
              WHERE entity = $1
              ORDER BY rowid",
@@ -158,6 +160,44 @@ impl EventStore {
         Ok(events)
     }
 
+    /// 获取指定 event_id 之后的所有 events（按插入顺序）。
+    ///
+    /// 用于快照基线回放：加载最近快照后，只回放后续的 events。
+    /// 使用 rowid 子查询确保按插入顺序正确截断。
+    pub async fn get_events_after_event_id(
+        pool: &SqlitePool,
+        after_event_id: &str,
+    ) -> Result<Vec<Event>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT event_id, entity, attribute, value, timestamp, created_at, mode
+             FROM events
+             WHERE rowid > (SELECT rowid FROM events WHERE event_id = $1)
+             ORDER BY rowid",
+        )
+        .bind(after_event_id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            let event = Self::row_to_event(row)?;
+            events.push(event);
+        }
+
+        Ok(events)
+    }
+
+    /// 获取最新 event 的 ID（按插入顺序）。
+    ///
+    /// 用于保存快照时记录当前位置。返回 None 表示 event store 为空。
+    pub async fn get_latest_event_id(pool: &SqlitePool) -> Result<Option<String>, sqlx::Error> {
+        let row = sqlx::query("SELECT event_id FROM events ORDER BY rowid DESC LIMIT 1")
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(row.map(|r| r.try_get::<String, _>(0).unwrap_or_default()))
+    }
+
     /// Convert a database row to an Event.
     fn row_to_event(row: sqlx::sqlite::SqliteRow) -> Result<Event, sqlx::Error> {
         let event_id: String = row.try_get(0)?;
@@ -166,11 +206,18 @@ impl EventStore {
         let value_json: String = row.try_get(3)?;
         let timestamp_json: String = row.try_get(4)?;
         let created_at: String = row.try_get(5)?;
+        let mode_str: String = row.try_get(6)?;
 
         let value: serde_json::Value =
             serde_json::from_str(&value_json).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
         let timestamp =
             serde_json::from_str(&timestamp_json).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+        let mode = match mode_str.as_str() {
+            "delta" => EventMode::Delta,
+            "ref" => EventMode::Ref,
+            "append" => EventMode::Append,
+            _ => EventMode::Full,
+        };
 
         Ok(Event {
             event_id,
@@ -179,6 +226,7 @@ impl EventStore {
             value,
             timestamp,
             created_at,
+            mode,
         })
     }
 }
@@ -247,7 +295,7 @@ mod tests {
             Event::new(
                 "block1".to_string(),
                 "type".to_string(),
-                serde_json::json!("markdown"),
+                serde_json::json!("document"),
                 timestamp.clone(),
             ),
         ];
@@ -288,7 +336,7 @@ mod tests {
             Event::new(
                 "block1".to_string(),
                 "type".to_string(),
-                serde_json::json!("code"),
+                serde_json::json!("document"),
                 timestamp.clone(),
             ),
         ];
@@ -303,5 +351,133 @@ mod tests {
         assert_eq!(block1_events.len(), 2);
         assert_eq!(block1_events[0].attribute, "name");
         assert_eq!(block1_events[1].attribute, "type");
+    }
+
+    #[tokio::test]
+    async fn test_get_events_after_event_id() {
+        let pool = EventStore::create(":memory:").await.unwrap();
+
+        let mut ts = HashMap::new();
+        ts.insert("alice".to_string(), 1);
+
+        let events = vec![
+            Event::new(
+                "block1".to_string(),
+                "alice/core.create".to_string(),
+                serde_json::json!({"name": "B1"}),
+                ts.clone(),
+            ),
+            Event::new(
+                "block2".to_string(),
+                "alice/core.create".to_string(),
+                serde_json::json!({"name": "B2"}),
+                ts.clone(),
+            ),
+            Event::new(
+                "block3".to_string(),
+                "alice/core.create".to_string(),
+                serde_json::json!({"name": "B3"}),
+                ts.clone(),
+            ),
+        ];
+
+        let pivot_event_id = events[0].event_id.clone();
+
+        EventStore::append_events(&pool.pool, &events)
+            .await
+            .unwrap();
+
+        // 获取第一个 event 之后的 events
+        let after = EventStore::get_events_after_event_id(&pool.pool, &pivot_event_id)
+            .await
+            .unwrap();
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].entity, "block2");
+        assert_eq!(after[1].entity, "block3");
+    }
+
+    #[tokio::test]
+    async fn test_get_events_after_last_event_returns_empty() {
+        let pool = EventStore::create(":memory:").await.unwrap();
+
+        let mut ts = HashMap::new();
+        ts.insert("alice".to_string(), 1);
+
+        let event = Event::new(
+            "block1".to_string(),
+            "alice/core.create".to_string(),
+            serde_json::json!({}),
+            ts,
+        );
+        let last_id = event.event_id.clone();
+
+        EventStore::append_events(&pool.pool, &[event])
+            .await
+            .unwrap();
+
+        let after = EventStore::get_events_after_event_id(&pool.pool, &last_id)
+            .await
+            .unwrap();
+        assert!(after.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_event_id() {
+        let pool = EventStore::create(":memory:").await.unwrap();
+
+        // 空数据库返回 None
+        let latest = EventStore::get_latest_event_id(&pool.pool).await.unwrap();
+        assert!(latest.is_none());
+
+        let mut ts = HashMap::new();
+        ts.insert("alice".to_string(), 1);
+
+        let events = vec![
+            Event::new(
+                "block1".to_string(),
+                "alice/core.create".to_string(),
+                serde_json::json!({}),
+                ts.clone(),
+            ),
+            Event::new(
+                "block2".to_string(),
+                "alice/core.create".to_string(),
+                serde_json::json!({}),
+                ts.clone(),
+            ),
+        ];
+
+        let expected_last_id = events[1].event_id.clone();
+
+        EventStore::append_events(&pool.pool, &events)
+            .await
+            .unwrap();
+
+        let latest = EventStore::get_latest_event_id(&pool.pool).await.unwrap();
+        assert_eq!(latest, Some(expected_last_id));
+    }
+
+    #[tokio::test]
+    async fn test_get_events_after_nonexistent_event_returns_empty() {
+        let pool = EventStore::create(":memory:").await.unwrap();
+
+        let mut ts = HashMap::new();
+        ts.insert("alice".to_string(), 1);
+
+        let event = Event::new(
+            "block1".to_string(),
+            "alice/core.create".to_string(),
+            serde_json::json!({}),
+            ts,
+        );
+        EventStore::append_events(&pool.pool, &[event])
+            .await
+            .unwrap();
+
+        // 不存在的 event_id：子查询返回 NULL，WHERE rowid > NULL 为 false
+        let after = EventStore::get_events_after_event_id(&pool.pool, "nonexistent")
+            .await
+            .unwrap();
+        assert!(after.is_empty());
     }
 }

@@ -19,64 +19,36 @@ impl GrantsTable {
         }
     }
 
-    /// Project a grants table from events in the EventStore.
+    /// Process a single grant/revoke event and update the table.
     ///
-    /// Processes all grant and revoke events to build the current authorization state.
-    /// Events have attribute format `{editor_id}/{cap_id}` where cap_id is "core.grant" or "core.revoke".
-    pub fn from_events(events: &[Event]) -> Self {
-        let mut table = Self::new();
+    /// This is the sole entry point for grant/revoke event processing.
+    /// Called by StateProjector::apply_event() for `core.grant` and `core.revoke` events.
+    pub fn process_event(&mut self, event: &Event) {
+        if event.attribute.ends_with("/core.grant") {
+            if let Some(obj) = event.value.as_object() {
+                let editor = obj.get("editor").and_then(|v| v.as_str()).unwrap_or("");
+                let capability = obj.get("capability").and_then(|v| v.as_str()).unwrap_or("");
+                let block = obj.get("block").and_then(|v| v.as_str()).unwrap_or("*");
 
-        for event in events {
-            // Attribute format: "{editor_id}/{cap_id}"
-            // Grant events: attribute ends with "/core.grant"
-            // Revoke events: attribute ends with "/core.revoke"
-
-            if event.attribute.ends_with("/core.grant") {
-                if let Some(grant_obj) = event.value.as_object() {
-                    let editor = grant_obj
-                        .get("editor")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let capability = grant_obj
-                        .get("capability")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let block = grant_obj
-                        .get("block")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("*");
-
-                    if !editor.is_empty() && !capability.is_empty() {
-                        table.add_grant(
-                            editor.to_string(),
-                            capability.to_string(),
-                            block.to_string(),
-                        );
-                    }
+                if !editor.is_empty() && !capability.is_empty() {
+                    self.add_grant(
+                        editor.to_string(),
+                        capability.to_string(),
+                        block.to_string(),
+                    );
                 }
-            } else if event.attribute.ends_with("/core.revoke") {
-                if let Some(revoke_obj) = event.value.as_object() {
-                    let editor = revoke_obj
-                        .get("editor")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let capability = revoke_obj
-                        .get("capability")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let block = revoke_obj
-                        .get("block")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("*");
+            }
+        } else if event.attribute.ends_with("/core.revoke") {
+            if let Some(obj) = event.value.as_object() {
+                let editor = obj.get("editor").and_then(|v| v.as_str()).unwrap_or("");
+                let capability = obj.get("capability").and_then(|v| v.as_str()).unwrap_or("");
+                let block = obj.get("block").and_then(|v| v.as_str()).unwrap_or("*");
 
-                    if !editor.is_empty() && !capability.is_empty() {
-                        table.remove_grant(editor, capability, block);
-                    }
+                if !editor.is_empty() && !capability.is_empty() {
+                    self.remove_grant(editor, capability, block);
                 }
             }
         }
-
-        table
     }
 
     /// Add a grant to the table.
@@ -116,9 +88,13 @@ impl GrantsTable {
         self.grants.get(editor_id)
     }
 
-    /// Get the internal grants map (for certificator function).
-    pub fn as_map(&self) -> &HashMap<String, Vec<(String, String)>> {
-        &self.grants
+    /// Iterate over all grants as (editor_id, cap_id, block_id) tuples.
+    pub fn iter_all(&self) -> impl Iterator<Item = (&str, &str, &str)> {
+        self.grants.iter().flat_map(|(editor_id, pairs)| {
+            pairs.iter().map(move |(cap_id, block_id)| {
+                (editor_id.as_str(), cap_id.as_str(), block_id.as_str())
+            })
+        })
     }
 
     /// Check if an editor has a specific grant.
@@ -172,7 +148,7 @@ mod tests {
 
         table.add_grant(
             "alice".to_string(),
-            "markdown.write".to_string(),
+            "document.write".to_string(),
             "block1".to_string(),
         );
 
@@ -180,7 +156,7 @@ mod tests {
         assert_eq!(grants.len(), 1);
         assert_eq!(
             grants[0],
-            ("markdown.write".to_string(), "block1".to_string())
+            ("document.write".to_string(), "block1".to_string())
         );
     }
 
@@ -190,12 +166,12 @@ mod tests {
 
         table.add_grant(
             "alice".to_string(),
-            "markdown.write".to_string(),
+            "document.write".to_string(),
             "block1".to_string(),
         );
         table.add_grant(
             "alice".to_string(),
-            "markdown.write".to_string(),
+            "document.write".to_string(),
             "block1".to_string(),
         );
 
@@ -209,7 +185,7 @@ mod tests {
 
         table.add_grant(
             "alice".to_string(),
-            "markdown.write".to_string(),
+            "document.write".to_string(),
             "block1".to_string(),
         );
         table.add_grant(
@@ -218,7 +194,7 @@ mod tests {
             "block2".to_string(),
         );
 
-        table.remove_grant("alice", "markdown.write", "block1");
+        table.remove_grant("alice", "document.write", "block1");
 
         let grants = table.get_grants("alice").unwrap();
         assert_eq!(grants.len(), 1);
@@ -231,7 +207,7 @@ mod tests {
 
         table.add_grant(
             "alice".to_string(),
-            "markdown.write".to_string(),
+            "document.write".to_string(),
             "block1".to_string(),
         );
         table.add_grant(
@@ -243,7 +219,7 @@ mod tests {
         table.remove_all_grants_for_editor("alice");
 
         assert!(table.get_grants("alice").is_none());
-        assert!(!table.has_grant("alice", "markdown.write", "block1"));
+        assert!(!table.has_grant("alice", "document.write", "block1"));
     }
 
     #[test]
@@ -251,12 +227,12 @@ mod tests {
         let mut table = GrantsTable::new();
         table.add_grant(
             "alice".to_string(),
-            "markdown.write".to_string(),
+            "document.write".to_string(),
             "block1".to_string(),
         );
 
-        assert!(table.has_grant("alice", "markdown.write", "block1"));
-        assert!(!table.has_grant("alice", "markdown.write", "block2"));
+        assert!(table.has_grant("alice", "document.write", "block1"));
+        assert!(!table.has_grant("alice", "document.write", "block2"));
         assert!(!table.has_grant("alice", "core.link", "block1"));
     }
 
@@ -265,27 +241,26 @@ mod tests {
         let mut table = GrantsTable::new();
         table.add_grant(
             "alice".to_string(),
-            "markdown.write".to_string(),
+            "document.write".to_string(),
             "*".to_string(),
         );
 
-        assert!(table.has_grant("alice", "markdown.write", "block1"));
-        assert!(table.has_grant("alice", "markdown.write", "block2"));
-        assert!(table.has_grant("alice", "markdown.write", "any_block"));
+        assert!(table.has_grant("alice", "document.write", "block1"));
+        assert!(table.has_grant("alice", "document.write", "block2"));
+        assert!(table.has_grant("alice", "document.write", "any_block"));
     }
 
     #[test]
-    fn test_from_events() {
-        // Create mock grant events
+    fn test_process_event_grant_and_revoke() {
         let mut ts1 = StdHashMap::new();
         ts1.insert("alice".to_string(), 1);
 
         let grant_event = Event::new(
             "alice".to_string(),
-            "alice/core.grant".to_string(), // attribute format: {editor_id}/{cap_id}
+            "alice/core.grant".to_string(),
             serde_json::json!({
                 "editor": "bob",
-                "capability": "markdown.write",
+                "capability": "document.write",
                 "block": "block1"
             }),
             ts1.clone(),
@@ -296,21 +271,23 @@ mod tests {
 
         let revoke_event = Event::new(
             "alice".to_string(),
-            "alice/core.revoke".to_string(), // attribute format: {editor_id}/{cap_id}
+            "alice/core.revoke".to_string(),
             serde_json::json!({
                 "editor": "bob",
-                "capability": "markdown.write",
+                "capability": "document.write",
                 "block": "block1"
             }),
             ts2,
         );
 
-        // Test: grant then revoke
-        let table = GrantsTable::from_events(&[grant_event.clone()]);
-        assert!(table.has_grant("bob", "markdown.write", "block1"));
+        // Test: grant via process_event
+        let mut table = GrantsTable::new();
+        table.process_event(&grant_event);
+        assert!(table.has_grant("bob", "document.write", "block1"));
 
-        let table = GrantsTable::from_events(&[grant_event, revoke_event]);
-        assert!(!table.has_grant("bob", "markdown.write", "block1"));
+        // Test: revoke via process_event
+        table.process_event(&revoke_event);
+        assert!(!table.has_grant("bob", "document.write", "block1"));
     }
 
     #[test]
@@ -319,18 +296,18 @@ mod tests {
         // Grant directory.write to ALL editors ("*") for a specific block
         table.add_grant(
             "*".to_string(),
-            "directory.write".to_string(),
+            "task.write".to_string(),
             "elf-block".to_string(),
         );
 
         // Any editor should match
-        assert!(table.has_grant("alice", "directory.write", "elf-block"));
-        assert!(table.has_grant("bob", "directory.write", "elf-block"));
-        assert!(table.has_grant("system", "directory.write", "elf-block"));
+        assert!(table.has_grant("alice", "task.write", "elf-block"));
+        assert!(table.has_grant("bob", "task.write", "elf-block"));
+        assert!(table.has_grant("system", "task.write", "elf-block"));
 
         // Wrong capability or block should not match
-        assert!(!table.has_grant("alice", "markdown.write", "elf-block"));
-        assert!(!table.has_grant("alice", "directory.write", "other-block"));
+        assert!(!table.has_grant("alice", "document.write", "elf-block"));
+        assert!(!table.has_grant("alice", "task.write", "other-block"));
     }
 
     #[test]
@@ -338,17 +315,17 @@ mod tests {
         let mut table = GrantsTable::new();
         table.add_grant(
             "*".to_string(),
-            "directory.write".to_string(),
+            "task.write".to_string(),
             "elf-block".to_string(),
         );
 
-        assert!(table.has_grant("alice", "directory.write", "elf-block"));
+        assert!(table.has_grant("alice", "task.write", "elf-block"));
 
         // Revoke the wildcard grant
-        table.remove_grant("*", "directory.write", "elf-block");
+        table.remove_grant("*", "task.write", "elf-block");
 
-        assert!(!table.has_grant("alice", "directory.write", "elf-block"));
-        assert!(!table.has_grant("bob", "directory.write", "elf-block"));
+        assert!(!table.has_grant("alice", "task.write", "elf-block"));
+        assert!(!table.has_grant("bob", "task.write", "elf-block"));
     }
 
     #[test]
@@ -358,38 +335,34 @@ mod tests {
         // Exact grant for alice
         table.add_grant(
             "alice".to_string(),
-            "markdown.write".to_string(),
+            "document.write".to_string(),
             "block1".to_string(),
         );
         // Wildcard grant for all editors
         table.add_grant(
             "*".to_string(),
-            "directory.write".to_string(),
+            "task.write".to_string(),
             "elf-block".to_string(),
         );
 
         // alice: exact grant works
-        assert!(table.has_grant("alice", "markdown.write", "block1"));
+        assert!(table.has_grant("alice", "document.write", "block1"));
         // alice: wildcard grant also works
-        assert!(table.has_grant("alice", "directory.write", "elf-block"));
+        assert!(table.has_grant("alice", "task.write", "elf-block"));
         // bob: only wildcard grant works
-        assert!(table.has_grant("bob", "directory.write", "elf-block"));
-        assert!(!table.has_grant("bob", "markdown.write", "block1"));
+        assert!(table.has_grant("bob", "task.write", "elf-block"));
+        assert!(!table.has_grant("bob", "document.write", "block1"));
     }
 
     #[test]
     fn test_wildcard_editor_combined_with_wildcard_block() {
         let mut table = GrantsTable::new();
         // Grant to all editors on all blocks
-        table.add_grant(
-            "*".to_string(),
-            "directory.write".to_string(),
-            "*".to_string(),
-        );
+        table.add_grant("*".to_string(), "task.write".to_string(), "*".to_string());
 
-        assert!(table.has_grant("alice", "directory.write", "any-block"));
-        assert!(table.has_grant("bob", "directory.write", "other-block"));
+        assert!(table.has_grant("alice", "task.write", "any-block"));
+        assert!(table.has_grant("bob", "task.write", "other-block"));
         // Wrong capability still doesn't match
-        assert!(!table.has_grant("alice", "markdown.write", "any-block"));
+        assert!(!table.has_grant("alice", "document.write", "any-block"));
     }
 }

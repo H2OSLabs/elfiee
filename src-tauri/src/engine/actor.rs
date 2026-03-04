@@ -1,52 +1,12 @@
 use crate::capabilities::registry::CapabilityRegistry;
+use crate::engine::cache_store::CacheStore;
 use crate::engine::event_store::{EventPoolWithPath, EventStore};
 use crate::engine::state::StateProjector;
 use crate::models::{Block, Command, Editor, Event, LinkBlockPayload, RELATION_IMPLEMENT};
-use crate::utils::write_block_snapshot;
+use sqlx::sqlite::SqlitePool;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::sync::{mpsc, oneshot};
-
-/// Prefix for block-specific directories
-const BLOCK_DIR_PREFIX: &str = "block-";
-
-/// Inject _block_dir into block contents and create the directory.
-///
-/// Creates a block-specific directory and injects its path into the contents.
-/// This is a runtime-only operation - _block_dir should be stripped before persistence.
-///
-/// # Arguments
-/// - `temp_dir`: Parent temporary directory
-/// - `block_id`: Block identifier
-/// - `contents`: Block contents to inject _block_dir into
-///
-/// # Returns
-/// - `Ok(PathBuf)`: Path to the created block directory
-/// - `Err(String)`: I/O error
-fn inject_block_dir(
-    temp_dir: &Path,
-    block_id: &str,
-    contents: &mut serde_json::Value,
-) -> Result<PathBuf, String> {
-    let block_dir = temp_dir.join(format!("{}{}", BLOCK_DIR_PREFIX, block_id));
-
-    // Create block directory if it doesn't exist.
-    // Handle the case where it might already exist gracefully.
-    if let Err(e) = std::fs::create_dir_all(&block_dir) {
-        if e.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(format!("Failed to create block directory: {}", e));
-        }
-    }
-    // Inject _block_dir into contents (runtime only, will be stripped before persistence)
-    if let Some(obj) = contents.as_object_mut() {
-        obj.insert(
-            "_block_dir".to_string(),
-            serde_json::json!(block_dir.to_string_lossy()),
-        );
-    }
-
-    Ok(block_dir)
-}
 
 /// Messages that can be sent to the engine actor.
 #[derive(Debug)]
@@ -94,9 +54,26 @@ pub enum EngineMessage {
     GetAllEvents {
         response: oneshot::Sender<Result<Vec<Event>, String>>,
     },
+    /// Get events for a specific entity (block or editor)
+    GetEventsByEntity {
+        entity: String,
+        response: oneshot::Sender<Result<Vec<Event>, String>>,
+    },
+    /// Get events after a specific event ID (for incremental replay)
+    GetEventsAfterEventId {
+        after_event_id: String,
+        response: oneshot::Sender<Result<Vec<Event>, String>>,
+    },
+    /// Get the latest event ID
+    GetLatestEventId {
+        response: oneshot::Sender<Result<Option<String>, String>>,
+    },
     /// Shutdown the actor
     Shutdown,
 }
+
+/// CacheStore 中全量 StateProjector 快照的 key。
+const CACHE_KEY_PROJECTOR: &str = "__projector__";
 
 /// Actor that processes commands for a single .elf file.
 ///
@@ -118,105 +95,12 @@ pub struct ElfileEngineActor {
 
     /// Mailbox for receiving messages
     mailbox: mpsc::UnboundedReceiver<EngineMessage>,
+
+    /// 本机快照缓存池（`:memory:` 测试时为 None）
+    cache_pool: Option<SqlitePool>,
 }
 
 impl ElfileEngineActor {
-    /// Execute closure with temp dir derived from event pool path, if available.
-    fn with_temp_dir<F>(&self, mut f: F)
-    where
-        F: FnMut(&Path),
-    {
-        if let Some(temp_dir) = self
-            .event_pool_with_path
-            .db_path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-        {
-            f(temp_dir);
-        }
-    }
-
-    /// Inject _block_dir for a specific block when temp dir is available.
-    fn inject_block_dir_if_possible(&self, block: &mut Block) {
-        self.with_temp_dir(|temp_dir| {
-            let _ = inject_block_dir(temp_dir, &block.block_id, &mut block.contents);
-        });
-    }
-
-    /// Write physical snapshot files for events that modify block content.
-    ///
-    /// Called after events are committed and state is projected.
-    /// Handles: markdown.write, code.write, directory.write, directory.import,
-    /// directory.create, and core.create (for blocks with content).
-    fn write_snapshots(&self, events: &[Event]) {
-        let temp_dir = match self
-            .event_pool_with_path
-            .db_path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-        {
-            Some(dir) => dir,
-            None => return, // :memory: database, no filesystem
-        };
-
-        for event in events {
-            let cap_id = Self::extract_cap_id(&event.attribute);
-
-            match cap_id {
-                "markdown.write" | "code.write" | "task.write" => {
-                    // Content write: get block from state and write snapshot
-                    if let Some(block) = self.state.get_block(&event.entity) {
-                        if let Err(e) = write_block_snapshot(
-                            temp_dir,
-                            &block.block_id,
-                            &block.block_type,
-                            &block.name,
-                            &block.contents,
-                        ) {
-                            log::warn!("Snapshot error for {}: {}", event.entity, e);
-                        }
-                    }
-                }
-                "directory.write" => {
-                    // Directory entries changed: write body.json snapshot
-                    if let Some(block) = self.state.get_block(&event.entity) {
-                        if let Err(e) = write_block_snapshot(
-                            temp_dir,
-                            &block.block_id,
-                            &block.block_type,
-                            &block.name,
-                            &block.contents,
-                        ) {
-                            log::warn!("Snapshot error for directory {}: {}", event.entity, e);
-                        }
-                    }
-                }
-                "core.create" => {
-                    // New block created: write snapshot if it has content
-                    if let Some(block) = self.state.get_block(&event.entity) {
-                        if let Err(e) = write_block_snapshot(
-                            temp_dir,
-                            &block.block_id,
-                            &block.block_type,
-                            &block.name,
-                            &block.contents,
-                        ) {
-                            log::warn!("Snapshot error for new block {}: {}", event.entity, e);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Extract the capability ID from an event attribute.
-    ///
-    /// Attribute format: `{editor_id}/{cap_id}` (e.g., "alice/markdown.write")
-    fn extract_cap_id(attribute: &str) -> &str {
-        attribute.split('/').nth(1).unwrap_or("")
-    }
-
     /// Check if linking source → target would create a cycle in the DAG.
     ///
     /// From target, DFS along `implement` children. If we reach source,
@@ -254,8 +138,9 @@ impl ElfileEngineActor {
 
     /// Create a new engine actor for a file.
     ///
-    /// This initializes the actor by replaying all events from the database
-    /// to rebuild the current state.
+    /// 启动策略：
+    /// 1. 尝试从 CacheStore 加载快照 + 增量 replay（快）
+    /// 2. 失败则全量 replay（慢但总是正确）
     pub async fn new(
         file_id: String,
         event_pool_with_path: EventPoolWithPath,
@@ -264,14 +149,43 @@ impl ElfileEngineActor {
         let registry = CapabilityRegistry::new();
         let mut state = StateProjector::new();
 
-        // Inject system owner editor ID for global authorization bypass
-        state.system_editor_id = crate::config::get_system_editor_id().ok();
+        // 尝试打开本机缓存
+        let cache_pool = Self::try_open_cache(&event_pool_with_path.db_path).await;
+        let mut used_cache = false;
 
-        // Replay all events from database to rebuild state
-        let events = EventStore::get_all_events(&event_pool_with_path.pool)
-            .await
-            .map_err(|e| format!("Failed to load events from database: {}", e))?;
-        state.replay(events);
+        // 快速路径：从快照恢复 + 增量 replay
+        if let Some(ref cache) = cache_pool {
+            if let Ok(Some((cached_event_id, cached_state))) =
+                CacheStore::get_latest_snapshot(cache, CACHE_KEY_PROJECTOR).await
+            {
+                if state.restore_full_state(&cached_state) {
+                    // 只 replay 快照之后的增量事件
+                    match EventStore::get_events_after_event_id(
+                        &event_pool_with_path.pool,
+                        &cached_event_id,
+                    )
+                    .await
+                    {
+                        Ok(incremental) => {
+                            state.replay(incremental);
+                            used_cache = true;
+                        }
+                        Err(_) => {
+                            // 快照可能过期，回退到全量 replay
+                            state = StateProjector::new();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 慢路径：全量 replay
+        if !used_cache {
+            let events = EventStore::get_all_events(&event_pool_with_path.pool)
+                .await
+                .map_err(|e| format!("Failed to load events from database: {}", e))?;
+            state.replay(events);
+        }
 
         Ok(Self {
             file_id,
@@ -279,7 +193,50 @@ impl ElfileEngineActor {
             state,
             registry,
             mailbox,
+            cache_pool,
         })
+    }
+
+    /// 尝试打开本机缓存数据库。
+    ///
+    /// 仅当 db_path 符合 `<project>/.elf/eventstore.db` 结构时才启用缓存。
+    /// `:memory:` 测试和非标准路径返回 None（不影响功能，只跳过缓存）。
+    async fn try_open_cache(db_path: &Path) -> Option<SqlitePool> {
+        let db_str = db_path.to_str()?;
+        if db_str == ":memory:" || db_str.is_empty() {
+            return None;
+        }
+
+        // 验证路径结构：parent 必须是 .elf 目录
+        let elf_dir = db_path.parent()?;
+        if elf_dir.file_name()?.to_str()? != ".elf" {
+            return None;
+        }
+
+        // db_path = /project/.elf/eventstore.db → project_path = /project
+        let project_path = elf_dir.parent()?;
+        let cache_path = CacheStore::cache_path_for_project(project_path);
+        let cache_str = cache_path.to_str()?;
+
+        CacheStore::create(cache_str).await.ok()
+    }
+
+    /// 关闭时保存全量 StateProjector 快照到本机缓存。
+    async fn save_cache_snapshot(&self) {
+        if let Some(ref cache) = self.cache_pool {
+            if let Ok(Some(latest_event_id)) =
+                EventStore::get_latest_event_id(&self.event_pool_with_path.pool).await
+            {
+                let full_state = self.state.serialize_full_state();
+                let _ = CacheStore::save_snapshot(
+                    cache,
+                    CACHE_KEY_PROJECTOR,
+                    &latest_event_id,
+                    &full_state,
+                )
+                .await;
+            }
+        }
     }
 
     /// Run the actor's main loop.
@@ -293,22 +250,11 @@ impl ElfileEngineActor {
                     let _ = response.send(result);
                 }
                 EngineMessage::GetBlock { block_id, response } => {
-                    let mut block = self.state.get_block(&block_id).cloned();
-
-                    if let Some(ref mut b) = block {
-                        self.inject_block_dir_if_possible(b);
-                    }
+                    let block = self.state.get_block(&block_id).cloned();
                     let _ = response.send(block);
                 }
                 EngineMessage::GetAllBlocks { response } => {
-                    let mut blocks = self.state.blocks.clone();
-
-                    self.with_temp_dir(|temp_dir| {
-                        for block in blocks.values_mut() {
-                            let _ =
-                                inject_block_dir(temp_dir, &block.block_id, &mut block.contents);
-                        }
-                    });
+                    let blocks = self.state.blocks.clone();
                     let _ = response.send(blocks);
                 }
                 EngineMessage::GetAllEditors { response } => {
@@ -316,7 +262,14 @@ impl ElfileEngineActor {
                     let _ = response.send(editors);
                 }
                 EngineMessage::GetAllGrants { response } => {
-                    let grants = self.state.grants.as_map().clone();
+                    let mut grants: std::collections::HashMap<String, Vec<(String, String)>> =
+                        std::collections::HashMap::new();
+                    for (editor_id, cap_id, block_id) in self.state.grants.iter_all() {
+                        grants
+                            .entry(editor_id.to_string())
+                            .or_default()
+                            .push((cap_id.to_string(), block_id.to_string()));
+                    }
                     let _ = response.send(grants);
                 }
                 EngineMessage::GetAllEvents { response } => {
@@ -324,6 +277,31 @@ impl ElfileEngineActor {
                         .await
                         .map_err(|e| format!("Failed to get events: {}", e));
                     let _ = response.send(events);
+                }
+                EngineMessage::GetEventsByEntity { entity, response } => {
+                    let events =
+                        EventStore::get_events_by_entity(&self.event_pool_with_path.pool, &entity)
+                            .await
+                            .map_err(|e| format!("Failed to get events by entity: {}", e));
+                    let _ = response.send(events);
+                }
+                EngineMessage::GetEventsAfterEventId {
+                    after_event_id,
+                    response,
+                } => {
+                    let events = EventStore::get_events_after_event_id(
+                        &self.event_pool_with_path.pool,
+                        &after_event_id,
+                    )
+                    .await
+                    .map_err(|e| format!("Failed to get events after event: {}", e));
+                    let _ = response.send(events);
+                }
+                EngineMessage::GetLatestEventId { response } => {
+                    let result = EventStore::get_latest_event_id(&self.event_pool_with_path.pool)
+                        .await
+                        .map_err(|e| format!("Failed to get latest event id: {}", e));
+                    let _ = response.send(result);
                 }
                 EngineMessage::GetEditorGrants {
                     editor_id,
@@ -340,15 +318,13 @@ impl ElfileEngineActor {
                 EngineMessage::GetBlockGrants { block_id, response } => {
                     // Get all grants and filter those that apply to this block
                     let mut block_grants = Vec::new();
-                    for (editor_id, grants) in self.state.grants.as_map() {
-                        for (cap_id, target_block) in grants {
-                            if target_block == &block_id || target_block == "*" {
-                                block_grants.push((
-                                    editor_id.clone(),
-                                    cap_id.clone(),
-                                    target_block.clone(),
-                                ));
-                            }
+                    for (editor_id, cap_id, target_block) in self.state.grants.iter_all() {
+                        if target_block == block_id || target_block == "*" {
+                            block_grants.push((
+                                editor_id.to_string(),
+                                cap_id.to_string(),
+                                target_block.to_string(),
+                            ));
                         }
                     }
                     let _ = response.send(block_grants);
@@ -359,10 +335,18 @@ impl ElfileEngineActor {
                     block_id,
                     response,
                 } => {
-                    let authorized = self.state.is_authorized(&editor_id, &cap_id, &block_id);
+                    // Pure event-sourcing auth: owner check + grants check
+                    let authorized = self
+                        .state
+                        .get_block(&block_id)
+                        .map(|b| b.owner == editor_id)
+                        .unwrap_or(false)
+                        || self.state.grants.has_grant(&editor_id, &cap_id, &block_id);
                     let _ = response.send(authorized);
                 }
                 EngineMessage::Shutdown => {
+                    // 关闭前保存快照到本机缓存
+                    self.save_cache_snapshot().await;
                     break;
                 }
             }
@@ -388,12 +372,11 @@ impl ElfileEngineActor {
             .ok_or_else(|| format!("Unknown capability: {}", cmd.cap_id))?;
 
         // 2. Get block (None for create operations, Some for others)
-        // System-level operations like core.create, editor.create, editor.delete, and agent.create don't require a block.
+        // System-level operations like core.create, editor.create, editor.delete don't require a block.
         // Wildcard grants/revokes (block_id = "*") also skip block lookup since "*" is not a real block.
-        let mut block_opt = if cmd.cap_id == "core.create"
+        let block_opt = if cmd.cap_id == "core.create"
             || cmd.cap_id == "editor.create"
             || cmd.cap_id == "editor.delete"
-            || cmd.cap_id == "agent.create"
         {
             None
         } else if (cmd.cap_id == "core.grant" || cmd.cap_id == "core.revoke") && cmd.block_id == "*"
@@ -410,32 +393,13 @@ impl ElfileEngineActor {
             )
         };
 
-        // 2.5. Inject _block_dir into block contents (runtime only, not persisted)
-        // Skip for :memory: databases used in unit tests (no filesystem access needed)
-        if let Some(ref mut block) = block_opt {
-            if let Some(temp_dir) = self
-                .event_pool_with_path
-                .db_path
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-            {
-                // Use helper function to inject _block_dir and create directory
-                inject_block_dir(temp_dir, &block.block_id, &mut block.contents)?;
-            }
-        }
-
-        // 3. Check authorization (certificator)
-        // Only check if block exists (non-create operations)
-        if let Some(block) = block_opt.as_ref() {
-            if !self
-                .state
-                .is_authorized(&cmd.editor_id, &cmd.cap_id, &block.block_id)
-            {
-                return Err(format!(
-                    "Authorization failed: {} does not have permission for {} on block {}",
-                    cmd.editor_id, cmd.cap_id, cmd.block_id
-                ));
-            }
+        // 3. Check authorization (certificator) — always called, no exceptions
+        // Every operation requires authorization (CBAC: "每个操作都需要授权")
+        if !handler.certificator(&cmd.editor_id, block_opt.as_ref(), &self.state.grants) {
+            return Err(format!(
+                "Authorization failed: {} does not have permission for {} on block {}",
+                cmd.editor_id, cmd.cap_id, cmd.block_id
+            ));
         }
 
         // 3.5. DAG cycle detection for core.link
@@ -445,7 +409,7 @@ impl ElfileEngineActor {
             self.check_link_cycle(&cmd.block_id, &payload.target_id)?;
         }
 
-        // 4. Execute handler (block now contains _block_dir)
+        // 4. Execute handler
         let mut events = handler.handler(&cmd, block_opt.as_ref())?;
 
         // 5. Update vector clock
@@ -457,27 +421,6 @@ impl ElfileEngineActor {
 
         for event in &mut events {
             event.timestamp = full_timestamp.clone();
-        }
-
-        // 5.5. Special handling: inject _block_dir for core.create
-        // Skip for :memory: databases used in unit tests
-        if cmd.cap_id == "core.create" {
-            if let Some(temp_dir) = self
-                .event_pool_with_path
-                .db_path
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-            {
-                for event in &mut events {
-                    if event.attribute.ends_with("/core.create") {
-                        // Inject _block_dir into new block's contents
-                        if let Some(contents) = event.value.get_mut("contents") {
-                            // Use helper function to inject and create directory
-                            inject_block_dir(temp_dir, &event.entity, contents)?;
-                        }
-                    }
-                }
-            }
         }
 
         // 6. Check for conflicts (MVP simple version)
@@ -492,33 +435,16 @@ impl ElfileEngineActor {
             );
         }
 
-        // 7. Strip runtime-only fields before persistence
-        // _block_dir is injected at runtime and should not be stored in events
-        let mut events_to_persist = events.clone();
-        for event in &mut events_to_persist {
-            if let Some(contents) = event.value.get_mut("contents") {
-                if let Some(obj) = contents.as_object_mut() {
-                    obj.remove("_block_dir");
-                }
-            }
-        }
-
-        // 8. Persist events to database (without runtime fields)
-        EventStore::append_events(&self.event_pool_with_path.pool, &events_to_persist)
+        // 7. Persist events to database
+        EventStore::append_events(&self.event_pool_with_path.pool, &events)
             .await
             .map_err(|e| format!("Failed to persist events to database: {}", e))?;
 
-        // 9. Apply events to StateProjector (use original events with runtime fields)
+        // 8. Apply events to StateProjector
         for event in &events {
             self.state.apply_event(event);
         }
 
-        // 10. Write block snapshots to physical files (non-critical)
-        // Snapshots are derived data for symlinks and external access.
-        // Errors are logged but do not fail the command.
-        self.write_snapshots(&events);
-
-        // Return original events (with _block_dir) for caller
         Ok(events)
     }
 }
@@ -682,6 +608,48 @@ impl EngineHandle {
             .map_err(|_| "Engine actor did not respond".to_string())?
     }
 
+    /// Get events for a specific entity (block or editor).
+    pub async fn get_events_by_entity(&self, entity: String) -> Result<Vec<Event>, String> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(EngineMessage::GetEventsByEntity {
+                entity,
+                response: tx,
+            })
+            .map_err(|_| "Engine actor has shut down".to_string())?;
+
+        rx.await
+            .map_err(|_| "Engine actor did not respond".to_string())?
+    }
+
+    /// Get events after a specific event ID.
+    pub async fn get_events_after_event_id(
+        &self,
+        after_event_id: String,
+    ) -> Result<Vec<Event>, String> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(EngineMessage::GetEventsAfterEventId {
+                after_event_id,
+                response: tx,
+            })
+            .map_err(|_| "Engine actor has shut down".to_string())?;
+
+        rx.await
+            .map_err(|_| "Engine actor did not respond".to_string())?
+    }
+
+    /// Get the latest event ID.
+    pub async fn get_latest_event_id(&self) -> Result<Option<String>, String> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(EngineMessage::GetLatestEventId { response: tx })
+            .map_err(|_| "Engine actor has shut down".to_string())?;
+
+        rx.await
+            .map_err(|_| "Engine actor did not respond".to_string())?
+    }
+
     /// Shutdown the engine actor.
     pub async fn shutdown(&self) {
         let _ = self.sender.send(EngineMessage::Shutdown);
@@ -711,6 +679,52 @@ pub async fn spawn_engine(
 mod tests {
     use super::*;
 
+    /// Seed bootstrap events for a test editor directly to EventStore.
+    /// Writes editor.create + wildcard core.grant events for all registered capabilities.
+    /// Must be called BEFORE spawn_engine() so the engine replays these during init.
+    async fn seed_test_editor(event_pool: &EventPoolWithPath, editor_id: &str) {
+        let registry = CapabilityRegistry::new();
+        let cap_ids = registry.get_grantable_cap_ids(&[]);
+
+        let mut events = Vec::new();
+
+        let mut ts = HashMap::new();
+        ts.insert(editor_id.to_string(), 1);
+
+        // editor.create event
+        events.push(Event::new(
+            editor_id.to_string(),
+            format!("{}/editor.create", editor_id),
+            serde_json::json!({
+                "editor_id": editor_id,
+                "name": editor_id,
+                "editor_type": "Human"
+            }),
+            ts,
+        ));
+
+        // Wildcard grants for all capabilities
+        for (i, cap_id) in cap_ids.iter().enumerate() {
+            let mut grant_ts = HashMap::new();
+            grant_ts.insert(editor_id.to_string(), (i + 2) as i64);
+
+            events.push(Event::new(
+                "*".to_string(),
+                format!("{}/core.grant", editor_id),
+                serde_json::json!({
+                    "editor": editor_id,
+                    "capability": cap_id,
+                    "block": "*"
+                }),
+                grant_ts,
+            ));
+        }
+
+        EventStore::append_events(&event_pool.pool, &events)
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn test_engine_actor_creation() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
@@ -728,18 +742,18 @@ mod tests {
     #[tokio::test]
     async fn test_engine_create_block() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool.clone())
             .await
             .expect("Failed to spawn engine");
 
-        // Create a block
         let cmd = Command::new(
             "alice".to_string(),
             "core.create".to_string(),
             "".to_string(),
             serde_json::json!({
                 "name": "Test Block",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
@@ -751,7 +765,6 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].attribute, "alice/core.create");
 
-        // Verify block was created
         let blocks = handle.get_all_blocks().await;
         assert_eq!(blocks.len(), 1);
 
@@ -761,6 +774,7 @@ mod tests {
     #[tokio::test]
     async fn test_engine_authorization_owner() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool.clone())
             .await
             .expect("Failed to spawn engine");
@@ -772,7 +786,7 @@ mod tests {
             "".to_string(),
             serde_json::json!({
                 "name": "Alice's Block",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
@@ -802,6 +816,8 @@ mod tests {
     #[tokio::test]
     async fn test_engine_authorization_non_owner_rejected() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        // Only bootstrap alice — bob has no grants
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool.clone())
             .await
             .expect("Failed to spawn engine");
@@ -813,7 +829,7 @@ mod tests {
             "".to_string(),
             serde_json::json!({
                 "name": "Alice's Block",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
@@ -823,7 +839,7 @@ mod tests {
             .expect("Failed to create block");
         let block_id = &create_events[0].entity;
 
-        // Bob (non-owner) should NOT be able to link without grant
+        // Bob (non-owner, no grants) should NOT be able to link
         let link_cmd = Command::new(
             "bob".to_string(),
             "core.link".to_string(),
@@ -835,7 +851,10 @@ mod tests {
         );
 
         let result = handle.process_command(link_cmd).await;
-        assert!(result.is_err(), "Non-owner should be rejected");
+        assert!(
+            result.is_err(),
+            "Non-owner without grants should be rejected"
+        );
         assert!(result.unwrap_err().contains("Authorization failed"));
 
         handle.shutdown().await;
@@ -844,6 +863,8 @@ mod tests {
     #[tokio::test]
     async fn test_engine_authorization_with_grant() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        // Only bootstrap alice — bob gets grant from alice below
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool.clone())
             .await
             .expect("Failed to spawn engine");
@@ -855,7 +876,7 @@ mod tests {
             "".to_string(),
             serde_json::json!({
                 "name": "Alice's Block",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
@@ -865,7 +886,7 @@ mod tests {
             .expect("Failed to create block");
         let block_id = &create_events[0].entity;
 
-        // Alice grants bob permission
+        // Alice grants bob core.link on the specific block
         let grant_cmd = Command::new(
             "alice".to_string(),
             "core.grant".to_string(),
@@ -902,18 +923,18 @@ mod tests {
     #[tokio::test]
     async fn test_engine_vector_clock_updates() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool.clone())
             .await
             .expect("Failed to spawn engine");
 
-        // Create first block
         let cmd1 = Command::new(
             "alice".to_string(),
             "core.create".to_string(),
             "".to_string(),
             serde_json::json!({
                 "name": "Block 1",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
@@ -922,14 +943,13 @@ mod tests {
             .await
             .expect("Failed to create block 1");
 
-        // Create second block
         let cmd2 = Command::new(
             "alice".to_string(),
             "core.create".to_string(),
             "".to_string(),
             serde_json::json!({
                 "name": "Block 2",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
@@ -938,9 +958,10 @@ mod tests {
             .await
             .expect("Failed to create block 2");
 
-        // Verify vector clock incremented
-        assert_eq!(events1[0].timestamp.get("alice"), Some(&1));
-        assert_eq!(events2[0].timestamp.get("alice"), Some(&2));
+        // Verify vector clock increments between commands (offset from bootstrap events)
+        let clock1 = *events1[0].timestamp.get("alice").unwrap();
+        let clock2 = *events2[0].timestamp.get("alice").unwrap();
+        assert_eq!(clock2, clock1 + 1, "Vector clock should increment by 1");
 
         handle.shutdown().await;
     }
@@ -948,18 +969,18 @@ mod tests {
     #[tokio::test]
     async fn test_engine_get_block() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool.clone())
             .await
             .expect("Failed to spawn engine");
 
-        // Create a block
         let create_cmd = Command::new(
             "alice".to_string(),
             "core.create".to_string(),
             "".to_string(),
             serde_json::json!({
                 "name": "Test Block",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
@@ -969,67 +990,22 @@ mod tests {
             .expect("Failed to create block");
         let block_id = &events[0].entity;
 
-        // Get the block
         let block = handle
             .get_block(block_id.clone())
             .await
             .expect("Block should exist");
 
         assert_eq!(block.name, "Test Block");
-        assert_eq!(block.block_type, "markdown");
+        assert_eq!(block.block_type, "document");
         assert_eq!(block.owner, "alice");
 
         handle.shutdown().await;
     }
 
     #[tokio::test]
-    async fn test_engine_get_block_injects_dir() {
-        // Use a real temp directory to test injection logic
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("events.db");
-        let event_pool = EventStore::create(db_path.to_str().unwrap()).await.unwrap();
-
-        let handle = spawn_engine("test_file".to_string(), event_pool.clone())
-            .await
-            .expect("Failed to spawn engine");
-
-        // Create a block
-        let create_cmd = Command::new(
-            "alice".to_string(),
-            "core.create".to_string(),
-            "".to_string(),
-            serde_json::json!({
-                "name": "Test Block",
-                "block_type": "markdown"
-            }),
-        );
-
-        let events = handle
-            .process_command(create_cmd)
-            .await
-            .expect("Failed to create block");
-        let block_id = &events[0].entity;
-
-        // Get the block
-        let block = handle
-            .get_block(block_id.clone())
-            .await
-            .expect("Block should exist");
-
-        // Verify _block_dir is injected
-        let contents = block.contents.as_object().unwrap();
-        assert!(contents.contains_key("_block_dir"));
-
-        let block_dir = contents.get("_block_dir").unwrap().as_str().unwrap();
-        assert!(std::path::Path::new(block_dir).exists());
-        assert!(block_dir.contains(block_id));
-
-        handle.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn test_create_block_with_metadata() {
+    async fn test_create_block_with_description() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool.clone())
             .await
             .expect("Failed to spawn engine");
@@ -1040,10 +1016,8 @@ mod tests {
             "".to_string(),
             serde_json::json!({
                 "name": "测试文档",
-                "block_type": "markdown",
-                "metadata": {
-                    "description": "这是一个测试文档"
-                }
+                "block_type": "document",
+                "description": "这是一个测试文档"
             }),
         );
 
@@ -1058,48 +1032,35 @@ mod tests {
         let block = handle.get_block(block_id).await.unwrap();
 
         assert_eq!(block.name, "测试文档");
-        assert_eq!(
-            block.metadata.description,
-            Some("这是一个测试文档".to_string())
-        );
-        assert!(block.metadata.created_at.is_some());
-        assert!(block.metadata.updated_at.is_some());
+        assert_eq!(block.description, Some("这是一个测试文档".to_string()));
 
         handle.shutdown().await;
     }
 
     #[tokio::test]
-    async fn test_write_updates_timestamp() {
+    async fn test_write_updates_contents() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool.clone())
             .await
             .expect("Failed to spawn engine");
 
-        // 创建 Block
         let create_cmd = Command::new(
             "alice".to_string(),
             "core.create".to_string(),
             "".to_string(),
             serde_json::json!({
                 "name": "Test",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
         let events = handle.process_command(create_cmd).await.unwrap();
         let block_id = events[0].entity.clone();
 
-        // 获取初始时间戳
-        let block = handle.get_block(block_id.clone()).await.unwrap();
-        let original_updated = block.metadata.updated_at.clone().unwrap();
-
-        // 等待一小段时间
-        tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
-
-        // 写入内容
         let write_cmd = Command::new(
             "alice".to_string(),
-            "markdown.write".to_string(),
+            "document.write".to_string(),
             block_id.clone(),
             serde_json::json!({
                 "content": "# Hello World"
@@ -1109,24 +1070,20 @@ mod tests {
         let result = handle.process_command(write_cmd).await;
         assert!(result.is_ok());
 
-        // 检查时间戳是否更新
         let block = handle.get_block(block_id).await.unwrap();
-        let new_updated = block.metadata.updated_at.clone().unwrap();
-
-        assert_ne!(original_updated, new_updated);
-        // created_at should remain unchanged
-        assert!(block.metadata.created_at.is_some());
+        assert_eq!(block.contents["content"], "# Hello World");
 
         handle.shutdown().await;
     }
 
     #[tokio::test]
-    async fn test_metadata_persists_after_replay() {
+    async fn test_description_persists_after_replay() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let db_path = temp_dir.path().join("events.db");
         let event_pool = EventStore::create(db_path.to_str().unwrap()).await.unwrap();
+        seed_test_editor(&event_pool, "alice").await;
 
-        // 创建第一个 handle，执行操作
+        // First engine: create block
         {
             let handle = spawn_engine("test_file".to_string(), event_pool.clone())
                 .await
@@ -1138,10 +1095,8 @@ mod tests {
                 "".to_string(),
                 serde_json::json!({
                     "name": "持久化测试",
-                    "block_type": "markdown",
-                    "metadata": {
-                        "description": "测试持久化"
-                    }
+                    "block_type": "document",
+                    "description": "测试持久化"
                 }),
             );
 
@@ -1149,7 +1104,7 @@ mod tests {
             handle.shutdown().await;
         }
 
-        // 创建第二个 handle，重放事件
+        // Second engine: replay events and verify
         {
             let handle = spawn_engine("test_file".to_string(), event_pool.clone())
                 .await
@@ -1160,9 +1115,7 @@ mod tests {
 
             let block = blocks.values().next().unwrap();
             assert_eq!(block.name, "持久化测试");
-            assert_eq!(block.metadata.description, Some("测试持久化".to_string()));
-            assert!(block.metadata.created_at.is_some());
-            assert!(block.metadata.updated_at.is_some());
+            assert_eq!(block.description, Some("测试持久化".to_string()));
 
             handle.shutdown().await;
         }
@@ -1171,11 +1124,12 @@ mod tests {
     #[tokio::test]
     async fn test_wildcard_grant_succeeds() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool)
             .await
             .unwrap();
 
-        // Create an editor first
+        // Create an editor (alice has editor.create wildcard grant)
         let create_editor_cmd = Command::new(
             "alice".to_string(),
             "editor.create".to_string(),
@@ -1185,14 +1139,14 @@ mod tests {
         let events = handle.process_command(create_editor_cmd).await.unwrap();
         let bob_id = events[0].entity.clone();
 
-        // Wildcard grant: block_id = "*" should NOT fail with "Block not found"
+        // Wildcard grant (alice has core.grant wildcard grant)
         let grant_cmd = Command::new(
             "alice".to_string(),
             "core.grant".to_string(),
             "*".to_string(),
             serde_json::json!({
                 "target_editor": bob_id,
-                "capability": "markdown.read",
+                "capability": "document.read",
                 "target_block": "*"
             }),
         );
@@ -1203,11 +1157,10 @@ mod tests {
             result.err()
         );
 
-        // Verify the grant was recorded
         let has_grant = handle
-            .check_grant(bob_id.clone(), "markdown.read".to_string(), "*".to_string())
+            .check_grant(bob_id.clone(), "document.read".to_string(), "*".to_string())
             .await;
-        assert!(has_grant, "Bob should have wildcard markdown.read grant");
+        assert!(has_grant, "Bob should have wildcard document.read grant");
 
         handle.shutdown().await;
     }
@@ -1215,6 +1168,7 @@ mod tests {
     #[tokio::test]
     async fn test_wildcard_revoke_succeeds() {
         let event_pool = EventStore::create(":memory:").await.unwrap();
+        seed_test_editor(&event_pool, "alice").await;
         let handle = spawn_engine("test_file".to_string(), event_pool)
             .await
             .unwrap();
@@ -1236,20 +1190,20 @@ mod tests {
             "*".to_string(),
             serde_json::json!({
                 "target_editor": bob_id,
-                "capability": "code.write",
+                "capability": "document.write",
                 "target_block": "*"
             }),
         );
         handle.process_command(grant_cmd).await.unwrap();
 
-        // Wildcard revoke should also work
+        // Revoke
         let revoke_cmd = Command::new(
             "alice".to_string(),
             "core.revoke".to_string(),
             "*".to_string(),
             serde_json::json!({
                 "target_editor": bob_id,
-                "capability": "code.write",
+                "capability": "document.write",
                 "target_block": "*"
             }),
         );
@@ -1260,13 +1214,16 @@ mod tests {
             result.err()
         );
 
-        // Verify the grant was removed
         let has_grant = handle
-            .check_grant(bob_id.clone(), "code.write".to_string(), "*".to_string())
+            .check_grant(
+                bob_id.clone(),
+                "document.write".to_string(),
+                "*".to_string(),
+            )
             .await;
         assert!(
             !has_grant,
-            "Bob should no longer have wildcard code.write grant"
+            "Bob should no longer have wildcard document.write grant"
         );
 
         handle.shutdown().await;

@@ -8,7 +8,6 @@
       "Edit(*)",
       "Write(*)",
       "Read(*)",
-      "Bash(**/ralph-wiggum/**)",
       "Task",
       "MultiEdit(*)",
       "Bash(rust-analyzer)",
@@ -25,7 +24,6 @@
     "defaultMode": "acceptEdits"
   },
   "enabledPlugins": {
-    "ralph-wiggum@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "context7@claude-plugins-official": true,
     "github@claude-plugins-official": false,

@@ -8,12 +8,54 @@
 /// - I2-05: DAG 环检测（自环、直接环、间接环）
 /// - I2-06: 现有测试 relation type 替换
 /// - I2-07: 本文件的集成测试
-use elfiee_lib::engine::{spawn_engine, EventStore};
-use elfiee_lib::models::{Command, RELATION_IMPLEMENT};
+use elfiee_lib::capabilities::registry::CapabilityRegistry;
+use elfiee_lib::engine::{spawn_engine, EventPoolWithPath, EventStore};
+use elfiee_lib::models::{Command, Event, RELATION_IMPLEMENT};
+use std::collections::HashMap;
+
+/// Seed bootstrap events for a test editor directly to EventStore.
+async fn seed_test_editor(event_pool: &EventPoolWithPath, editor_id: &str) {
+    let registry = CapabilityRegistry::new();
+    let cap_ids = registry.get_grantable_cap_ids(&[]);
+    let mut events = Vec::new();
+
+    let mut ts = HashMap::new();
+    ts.insert(editor_id.to_string(), 1);
+    events.push(Event::new(
+        editor_id.to_string(),
+        format!("{}/editor.create", editor_id),
+        serde_json::json!({
+            "editor_id": editor_id,
+            "name": editor_id,
+            "editor_type": "Human"
+        }),
+        ts,
+    ));
+
+    for (i, cap_id) in cap_ids.iter().enumerate() {
+        let mut grant_ts = HashMap::new();
+        grant_ts.insert(editor_id.to_string(), (i + 2) as i64);
+        events.push(Event::new(
+            "*".to_string(),
+            format!("{}/core.grant", editor_id),
+            serde_json::json!({
+                "editor": editor_id,
+                "capability": cap_id,
+                "block": "*"
+            }),
+            grant_ts,
+        ));
+    }
+
+    EventStore::append_events(&event_pool.pool, &events)
+        .await
+        .unwrap();
+}
 
 /// 辅助函数：创建内存 engine
 async fn setup_engine() -> elfiee_lib::engine::EngineHandle {
     let event_pool = EventStore::create(":memory:").await.unwrap();
+    seed_test_editor(&event_pool, "alice").await;
     spawn_engine("test_relation".to_string(), event_pool)
         .await
         .unwrap()
@@ -27,7 +69,7 @@ async fn create_block(handle: &elfiee_lib::engine::EngineHandle, name: &str) -> 
         "".to_string(),
         serde_json::json!({
             "name": name,
-            "block_type": "markdown"
+            "block_type": "document"
         }),
     );
     let events = handle.process_command(cmd).await.unwrap();

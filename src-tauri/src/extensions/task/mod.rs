@@ -1,29 +1,25 @@
 /// Task Extension
 ///
 /// Provides capabilities for managing task blocks in Elfiee.
-/// Tasks represent units of work that can be committed to external git repos.
 ///
 /// ## Capabilities
 ///
-/// - `task.write`: Write markdown content to a task block (same model as markdown.write)
-/// - `task.read`: Read task content (permission gate + audit)
+/// - `task.write`: Write structured fields to a task block
+/// - `task.read`: Read task content (permission gate)
 /// - `task.commit`: Generate audit event for committing task's downstream blocks
 ///
-/// ## Design Decision: No Explicit TaskStatus
+/// ## Contents Schema (data-model.md §5.2)
 ///
-/// Task state is derived from event history (Event Sourcing implicit state):
-/// - No `task.commit` event → Pending (has implement downstream → InProgress)
-/// - Has `task.commit` event → Committed
-///
-/// ## Contents Structure
-///
-/// Task blocks store content in the same format as markdown blocks:
 /// ```json
 /// {
-///   "markdown": "# 实现登录功能\n\n## 需求\n\n添加 OAuth 登录..."
+///   "description": "为项目添加 OAuth2 登录",
+///   "status": "pending",
+///   "assigned_to": "coder-agent",
+///   "template": "code-review"
 /// }
 /// ```
-/// Title is `block.name`, description is `metadata.description`.
+///
+/// Title is `block.name`, managed via `core.write`.
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -31,8 +27,6 @@ use specta::Type;
 // Module Exports
 // ============================================================================
 
-pub mod git;
-pub mod git_hooks;
 pub mod task_write;
 pub use task_write::*;
 
@@ -48,26 +42,34 @@ pub use task_commit::*;
 
 /// Payload for task.write capability
 ///
-/// Contains markdown content for a task block.
-/// Stored in `contents` as `{ "markdown": "..." }` — same model as markdown blocks.
-/// Title is stored in `block.name`, description in `metadata.description`.
+/// Updates structured fields of a task block.
+/// Only non-None fields are merged into contents.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct TaskWritePayload {
-    /// Markdown 内容
-    pub content: String,
+    /// 任务描述
+    #[serde(default)]
+    pub description: Option<String>,
+    /// 任务状态：pending / in_progress / completed / failed
+    #[serde(default)]
+    pub status: Option<String>,
+    /// 分配给的 editor_id
+    #[serde(default)]
+    pub assigned_to: Option<String>,
+    /// 使用的工作模板
+    #[serde(default)]
+    pub template: Option<String>,
 }
 
 /// Payload for task.read capability
 ///
-/// task.read is a permission-only capability, similar to markdown.read.
+/// task.read is a permission-only capability.
 /// No payload fields needed — the empty JSON object `{}` is accepted.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct TaskReadPayload {}
 
 /// Payload for task.commit capability
 ///
-/// Empty payload — target repo is auto-discovered from downstream blocks'
-/// `_block_dir` metadata, which links to external git repositories.
+/// Empty payload — records an audit event marking the task as committed.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct TaskCommitPayload {}
 

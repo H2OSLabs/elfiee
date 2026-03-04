@@ -1,20 +1,21 @@
 # Elfiee file type mappings
 # This file maps file extensions to elf block types.
 # Only extensions listed here will be recognized; unlisted extensions
-# fall back to "code" block type.
+# fall back to "document" block type.
 #
 # Format:
 #   [block_type]
 #   .ext1
 #   .ext2
 #
-# Edit this file to customize the defaults for your environment.
+# 重构后统一使用 [document] 类型（合并原 [markdown] 和 [code]）。
+# block_type 只有 3 种：document, task, session。
+# 文件格式通过 Document Block 的 format 字段区分（md/rs/py 等）。
 
-[markdown]
+[document]
+# Markdown
 .md
 .markdown
-
-[code]
 # Rust
 .rs
 # Python

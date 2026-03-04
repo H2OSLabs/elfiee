@@ -10,7 +10,7 @@ pub struct Grant {
     /// The editor who has been granted the capability
     pub editor_id: String,
 
-    /// The capability that has been granted (e.g., "markdown.write", "core.delete")
+    /// The capability that has been granted (e.g., "document.write", "core.delete")
     pub cap_id: String,
 
     /// The target block ID, or "*" for wildcard (all blocks)

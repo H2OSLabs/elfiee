@@ -2,7 +2,6 @@ use std::fs;
 use std::path::Path;
 
 /// 检查路径是否安全（防止路径遍历攻击）
-
 pub fn is_safe_path(path: &Path) -> Result<(), String> {
     // 1. Check for symlinks BEFORE canonicalization
 

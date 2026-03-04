@@ -1,11 +1,10 @@
 use crate::capabilities::core::{create_event, CapResult};
-use crate::models::{Block, BlockMetadata, Command, CreateBlockPayload, Event};
+use crate::models::{Block, Command, CreateBlockPayload, Event};
 use capability_macros::capability;
 
 /// Handler for core.create capability.
 ///
-/// Creates a new block with name, type, owner, and optional metadata.
-/// Automatically generates created_at and updated_at timestamps.
+/// Creates a new block with name, type, owner, and optional description.
 ///
 /// Note: The block parameter is None for create since the block doesn't exist yet.
 #[capability(id = "core.create", target = "core/*")]
@@ -17,34 +16,43 @@ fn handle_create(cmd: &Command, _block: Option<&Block>) -> CapResult<Vec<Event>>
     // Generate new block ID
     let block_id = uuid::Uuid::new_v4().to_string();
 
-    // Start with auto-generated timestamps
-    let mut metadata = BlockMetadata::new();
+    // Create a single event with full initial state
+    // Per README.md Part 2: create events contain the full initial state
+    let mut initial_contents = serde_json::json!({ "source": payload.source });
 
-    // Merge user-provided metadata if present
-    if let Some(user_metadata) = payload.metadata {
-        if let Ok(parsed) = BlockMetadata::from_json(&user_metadata) {
-            // Preserve user's custom fields and description
-            metadata.description = parsed.description;
-            metadata.custom = parsed.custom;
-            // Timestamps are always auto-generated, don't use user-provided ones
+    // Document blocks: inject format into contents
+    if payload.block_type == "document" {
+        if let Some(fmt) = &payload.format {
+            initial_contents["format"] = serde_json::json!(fmt);
         }
     }
 
-    // Create a single event with full initial state
-    // Per README.md Part 2: create events contain the full initial state
+    // If caller provided initial contents, merge them
+    if let Some(user_contents) = &payload.contents {
+        if let Some(obj) = user_contents.as_object() {
+            for (k, v) in obj {
+                initial_contents[k] = v.clone();
+            }
+        }
+    }
+
+    let mut value = serde_json::json!({
+        "name": payload.name,
+        "type": payload.block_type,
+        "owner": cmd.editor_id,
+        "contents": initial_contents,
+        "children": {}
+    });
+
+    // Include description if provided
+    if let Some(desc) = &payload.description {
+        value["description"] = serde_json::json!(desc);
+    }
+
     let event = create_event(
         block_id.clone(),
         "core.create", // cap_id
-        serde_json::json!({
-            "name": payload.name,
-            "type": payload.block_type,
-            "owner": cmd.editor_id,
-            "contents": {
-                "source": payload.source
-            },
-            "children": {},
-            "metadata": metadata.to_json()
-        }),
+        value,
         &cmd.editor_id,
         1, // Placeholder - engine actor updates with correct count (actor.rs:227)
     );
@@ -58,14 +66,14 @@ mod tests {
     use crate::models::Command;
 
     #[test]
-    fn test_create_generates_metadata_with_timestamps() {
+    fn test_create_basic() {
         let cmd = Command::new(
             "alice".to_string(),
             "core.create".to_string(),
             "".to_string(),
             serde_json::json!({
                 "name": "Test Block",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
@@ -76,34 +84,27 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         let event = &events[0];
-        let metadata = &event.value["metadata"];
-
-        // Should auto-generate timestamps
-        assert!(metadata["created_at"].is_string());
-        assert!(metadata["updated_at"].is_string());
-
-        // Timestamps should be in UTC format (ending with Z)
-        let created = metadata["created_at"].as_str().unwrap();
-        let updated = metadata["updated_at"].as_str().unwrap();
-        assert!(created.ends_with('Z'));
-        assert!(updated.ends_with('Z'));
+        assert_eq!(event.value["name"], "Test Block");
+        assert_eq!(event.value["type"], "document");
+        assert_eq!(event.value["owner"], "alice");
 
         // Verify source is injected into contents
         assert_eq!(event.value["contents"]["source"], "outline");
+
+        // No description when not provided
+        assert!(event.value.get("description").is_none());
     }
 
     #[test]
-    fn test_create_merges_user_metadata() {
+    fn test_create_with_description() {
         let cmd = Command::new(
             "alice".to_string(),
             "core.create".to_string(),
             "".to_string(),
             serde_json::json!({
                 "name": "Test Block",
-                "block_type": "markdown",
-                "metadata": {
-                    "description": "测试描述"
-                }
+                "block_type": "document",
+                "description": "测试描述"
             }),
         );
 
@@ -112,25 +113,19 @@ mod tests {
 
         let events = result.unwrap();
         let event = &events[0];
-        let metadata = &event.value["metadata"];
 
-        // User-provided fields should be preserved
-        assert_eq!(metadata["description"], "测试描述");
-
-        // Auto-generated timestamps should also exist
-        assert!(metadata["created_at"].is_string());
-        assert!(metadata["updated_at"].is_string());
+        assert_eq!(event.value["description"], "测试描述");
     }
 
     #[test]
-    fn test_create_without_metadata() {
+    fn test_create_without_description() {
         let cmd = Command::new(
             "alice".to_string(),
             "core.create".to_string(),
             "".to_string(),
             serde_json::json!({
                 "name": "Test Block",
-                "block_type": "markdown"
+                "block_type": "document"
             }),
         );
 
@@ -139,11 +134,8 @@ mod tests {
 
         let events = result.unwrap();
         let event = &events[0];
-        let metadata = &event.value["metadata"];
 
-        // Should have timestamps even if user didn't provide metadata
-        assert!(metadata.is_object());
-        assert!(metadata["created_at"].is_string());
-        assert!(metadata["updated_at"].is_string());
+        // description field should not exist when not provided
+        assert!(event.value.get("description").is_none());
     }
 }

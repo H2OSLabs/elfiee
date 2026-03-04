@@ -1,25 +1,19 @@
-mod change_type;
 mod create;
 mod delete;
 mod editor_create;
 mod editor_delete;
 mod grant;
 mod link;
-mod read;
-mod rename;
 mod revoke;
 mod unlink;
-mod update_metadata;
+mod write;
 
-pub use change_type::CoreChange_typeCapability;
 pub use create::CoreCreateCapability;
 pub use delete::CoreDeleteCapability;
 pub use editor_create::EditorCreateCapability;
 pub use editor_delete::EditorDeleteCapability;
 pub use grant::CoreGrantCapability;
 pub use link::CoreLinkCapability;
-pub use read::CoreReadCapability;
-pub use rename::CoreRenameCapability;
 pub use revoke::CoreRevokeCapability;
 pub use unlink::CoreUnlinkCapability;
-pub use update_metadata::CoreUpdate_metadataCapability;
+pub use write::CoreWriteCapability;

@@ -9,7 +9,6 @@
 //! ## Events
 //!
 //! - [`StateChangedEvent`] — Backend state changed (blocks/grants modified via MCP or Tauri commands)
-//! - [`PtyOutputEvent`] — Terminal PTY output (high-frequency, from reader thread)
 
 use serde::{Deserialize, Serialize};
 
@@ -21,17 +20,4 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, tauri_specta::Event)]
 pub struct StateChangedEvent {
     pub file_id: String,
-}
-
-/// Emitted when PTY produces output (high-frequency, from reader thread).
-///
-/// The frontend terminal (xterm.js) decodes the base64 data and writes it to the screen.
-/// Only emitted by GUI-initiated PTY sessions (not MCP-initiated sessions which
-/// only write to the output buffer).
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, tauri_specta::Event)]
-pub struct PtyOutputEvent {
-    /// Base64 encoded output data
-    pub data: String,
-    /// The terminal block ID
-    pub block_id: String,
 }

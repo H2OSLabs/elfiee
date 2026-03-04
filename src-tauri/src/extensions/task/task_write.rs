@@ -1,10 +1,11 @@
 /// Capability: task.write
 ///
-/// Writes markdown content to a task block's contents.
-/// Contents structure: `{ "markdown": "..." }` — same model as markdown blocks.
-/// Title is stored in `block.name`, description in `metadata.description`.
-///
-/// Automatically updates metadata.updated_at timestamp.
+/// Writes structured fields to a task block's contents.
+/// Contents structure (data-model.md §5.2):
+/// ```json
+/// { "description": "...", "status": "...", "assigned_to": "...", "template": "..." }
+/// ```
+/// Only non-None payload fields are merged (partial update).
 use super::TaskWritePayload;
 use crate::capabilities::core::{create_event, CapResult};
 use crate::models::{Block, Command, Event};
@@ -21,24 +22,43 @@ fn handle_task_write(cmd: &Command, block: Option<&Block>) -> CapResult<Vec<Even
     let payload: TaskWritePayload = serde_json::from_value(cmd.payload.clone())
         .map_err(|e| format!("Invalid payload for task.write: {}", e))?;
 
-    // 更新 contents：写入 markdown（与 markdown block 相同模型）
+    // At least one field must be provided
+    if payload.description.is_none()
+        && payload.status.is_none()
+        && payload.assigned_to.is_none()
+        && payload.template.is_none()
+    {
+        return Err(
+            "task.write requires at least one field (description, status, assigned_to, template)"
+                .to_string(),
+        );
+    }
+
+    // Merge non-None fields into existing contents
     let mut new_contents = if let Some(obj) = block.contents.as_object() {
         obj.clone()
     } else {
         serde_json::Map::new()
     };
-    new_contents.insert("markdown".to_string(), serde_json::json!(payload.content));
 
-    // 更新 metadata.updated_at
-    let mut new_metadata = block.metadata.clone();
-    new_metadata.touch();
+    if let Some(desc) = &payload.description {
+        new_contents.insert("description".to_string(), serde_json::json!(desc));
+    }
+    if let Some(status) = &payload.status {
+        new_contents.insert("status".to_string(), serde_json::json!(status));
+    }
+    if let Some(assigned_to) = &payload.assigned_to {
+        new_contents.insert("assigned_to".to_string(), serde_json::json!(assigned_to));
+    }
+    if let Some(template) = &payload.template {
+        new_contents.insert("template".to_string(), serde_json::json!(template));
+    }
 
     let event = create_event(
         block.block_id.clone(),
         "task.write",
         serde_json::json!({
-            "contents": new_contents,
-            "metadata": new_metadata.to_json()
+            "contents": new_contents
         }),
         &cmd.editor_id,
         1, // Placeholder — engine actor updates with correct count

@@ -28,8 +28,8 @@ fn load_elftypes() -> HashMap<String, String> {
         None => return parse_elftypes(DEFAULT_ELFTYPES),
     };
 
-    // Auto-create from bundled default if missing
-    if !path.exists() {
+    // Sync bundled default for production path only (not test overrides)
+    if std::env::var("ELF_TEST_ELFTYPES_PATH").is_err() {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -79,8 +79,9 @@ fn parse_elftypes(content: &str) -> HashMap<String, String> {
 /// Infer Block Type from file extension.
 ///
 /// Looks up the extension in the type map loaded from `~/.elf/.elftypes`.
-/// Unknown extensions fall back to `"code"` block type.
+/// Unknown extensions fall back to `"document"` block type.
 ///
+/// 重构后所有文本文件统一为 "document" 类型，文件格式通过 format 字段区分。
 /// Binary files (images, executables, archives, etc.) are filtered out at scan
 /// time via `.elfignore` patterns and never reach this function.
 pub fn infer_block_type(extension: &str) -> Option<String> {
@@ -90,8 +91,11 @@ pub fn infer_block_type(extension: &str) -> Option<String> {
     if let Some(block_type) = map.get(&ext) {
         Some(block_type.clone())
     } else {
-        log::debug!("Unknown extension '{}', defaulting to code block type", ext);
-        Some("code".to_string())
+        log::debug!(
+            "Unknown extension '{}', defaulting to document block type",
+            ext
+        );
+        Some("document".to_string())
     }
 }
 
@@ -104,30 +108,28 @@ mod tests {
     fn test_parse_elftypes() {
         let content = r#"
 # comment
-[markdown]
+[document]
 .md
 .markdown
-
-[code]
 .rs
 .py
 # inline comment
 .js
 "#;
         let map = parse_elftypes(content);
-        assert_eq!(map.get("md").unwrap(), "markdown");
-        assert_eq!(map.get("markdown").unwrap(), "markdown");
-        assert_eq!(map.get("rs").unwrap(), "code");
-        assert_eq!(map.get("py").unwrap(), "code");
-        assert_eq!(map.get("js").unwrap(), "code");
+        assert_eq!(map.get("md").unwrap(), "document");
+        assert_eq!(map.get("markdown").unwrap(), "document");
+        assert_eq!(map.get("rs").unwrap(), "document");
+        assert_eq!(map.get("py").unwrap(), "document");
+        assert_eq!(map.get("js").unwrap(), "document");
         assert_eq!(map.get("unknown"), None);
     }
 
     #[test]
     fn test_parse_elftypes_case_insensitive() {
-        let content = "[markdown]\n.MD\n";
+        let content = "[document]\n.MD\n";
         let map = parse_elftypes(content);
-        assert_eq!(map.get("md").unwrap(), "markdown");
+        assert_eq!(map.get("md").unwrap(), "document");
     }
 
     #[test]
@@ -139,14 +141,15 @@ mod tests {
     #[test]
     fn test_bundled_default_contains_expected_entries() {
         let map = parse_elftypes(DEFAULT_ELFTYPES);
-        assert_eq!(map.get("md").unwrap(), "markdown");
-        assert_eq!(map.get("rs").unwrap(), "code");
-        assert_eq!(map.get("json").unwrap(), "code");
-        assert_eq!(map.get("html").unwrap(), "code");
+        // 重构后所有扩展名统一映射为 "document"
+        assert_eq!(map.get("md").unwrap(), "document");
+        assert_eq!(map.get("rs").unwrap(), "document");
+        assert_eq!(map.get("json").unwrap(), "document");
+        assert_eq!(map.get("html").unwrap(), "document");
     }
 
     #[test]
-    fn test_load_elftypes_auto_creates_default() {
+    fn test_load_elftypes_fallback_when_missing() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join(".elftypes");
 
@@ -156,9 +159,9 @@ mod tests {
         let map = load_elftypes();
         std::env::remove_var("ELF_TEST_ELFTYPES_PATH");
 
-        assert!(path.exists());
-        assert_eq!(map.get("md").unwrap(), "markdown");
-        assert_eq!(map.get("rs").unwrap(), "code");
+        // Falls back to bundled default when file doesn't exist
+        assert_eq!(map.get("md").unwrap(), "document");
+        assert_eq!(map.get("rs").unwrap(), "document");
     }
 
     #[test]
